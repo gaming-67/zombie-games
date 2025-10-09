@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D Zombie Shooter (HTML / three.js)</title>
+<style>
+  html,body { height:100%; margin:0; overflow:hidden; background:#000; font-family: system-ui, Arial; }
+  #overlay {
+    position: absolute; left: 12px; top: 12px; z-index: 10; color: #dcdcdc;
+    background: rgba(0,0,0,0.35); padding:10px 12px; border-radius:8px;
+    backdrop-filter: blur(2px);
+  }
+  #hud {
+    position: absolute; right: 12px; top: 12px; z-index: 10; color:#fff;
+    background: rgba(0,0,0,0.35); padding:10px; border-radius:8px; text-align:right;
+    min-width:130px;
+  }
+  #message {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    z-index: 20; color: white; font-size: 20px; text-align:center;
+    background: rgba(0,0,0,0.6); padding:18px 26px; border-radius:12px; display:none;
+  }
+  button { cursor:pointer; }
+  canvas { display:block; }
+  .small { font-size: 12px; opacity:0.9; }
+  #crosshair {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:16px; height:16px; pointer-events:none; z-index:5;
+  }
+  #crosshair:before, #crosshair:after {
+    content:""; position:absolute; background:rgba(255,255,255,0.85);
+  }
+  #crosshair:before { left:7px; top:0; width:2px; height:16px; }
+  #crosshair:after { top:7px; left:0; width:16px; height:2px; }
+  #controls {
+    margin-top:8px;
+  }
+  .bar {
+    background: rgba(255,255,255,0.12); width:200px; height:12px; border-radius:8px; overflow:hidden;
+  }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,#ff4d4d,#ff8a4d); width:100%; }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <div><strong>3D Zombie Shooter</strong></div>
+  <div class="small">Click to lock pointer & start. WASD to move, Space to jump, Mouse to look, Click to shoot.</div>
+  <div id="controls"><button id="startBtn">Start Game</button></div>
+</div>
+
+<div id="hud">
+  <div>Health: <span id="health">100</span></div>
+  <div>Ammo: <span id="ammo">12</span> / <span id="reserve">48</span></div>
+  <div>Score: <span id="score">0</span></div>
+  <div class="small" style="margin-top:8px">Zombies alive: <span id="alive">0</span></div>
+</div>
+
+<div id="message"></div>
+<div id="crosshair"></div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
+
+let scene, camera, renderer, controls;
+let clock = new THREE.Clock();
+let bullets = [];
+let zombies = [];
+let floorMesh;
+let spawnTimer = 0, spawnInterval = 2.2;
+let score = 0;
+let health = 100;
+let ammo = 12, reserve = 48, clipSize = 12;
+let canShoot = true;
+let isRunning = false;
+let velocity = new THREE.Vector3();
+let move = { forward:0, backward:0, left:0, right:0 };
+let tempVec = new THREE.Vector3();
+const gravity = -30;
+const player = { speed: 8, jumpSpeed: 12, height: 1.8 };
+
+const hud = {
+  health: document.getElementById('health'),
+  ammo: document.getElementById('ammo'),
+  reserve: document.getElementById('reserve'),
+  score: document.getElementById('score'),
+  alive: document.getElementById('alive'),
+};
+const msg = document.getElementById('message');
+const startBtn = document.getElementById('startBtn');
+const overlay = document.getElementById('overlay');
+
+init();
+animate();
+
+function init() {
+  // scene
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.018);
+
+  // camera
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 2000);
+  camera.position.set(0, player.height, 8);
+
+  // renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // lights
+  const hemi = new THREE.HemisphereLight(0x99b3ff, 0x080820, 0.7);
+  scene.add(hemi);
+  const moon = new THREE.DirectionalLight(0xffffff, 0.7);
+  moon.position.set(5,10,2);
+  moon.castShadow = true;
+  moon.shadow.mapSize.set(2048,2048);
+  moon.shadow.camera.near = 0.5; moon.shadow.camera.far = 50;
+  scene.add(moon);
+
+  // ground
+  const groundGeo = new THREE.PlaneGeometry(300,300);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness:0.9 });
+  floorMesh = new THREE.Mesh(groundGeo, groundMat);
+  floorMesh.rotation.x = -Math.PI/2;
+  floorMesh.receiveShadow = true;
+  scene.add(floorMesh);
+
+  // scattered boxes as simple environment
+  const boxGeo = new THREE.BoxGeometry(1.4,1.4,1.4);
+  for (let i=0;i<40;i++){
+    const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(Math.random()*0.2+0.05,0.6,0.15) });
+    const m = new THREE.Mesh(boxGeo, mat);
+    m.castShadow = true; m.receiveShadow = true;
+    m.position.set((Math.random()-0.5)*100,0.7,(Math.random()-0.5)*100);
+    m.rotation.y = Math.random()*Math.PI*2;
+    scene.add(m);
+  }
+
+  // simple skybox (big sphere)
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(500, 32, 16),
+    new THREE.MeshBasicMaterial({ color: 0x03030a, side: THREE.BackSide })
+  );
+  scene.add(sky);
+
+  // controls
+  controls = new PointerLockControls(camera, document.body);
+  controls.getObject().position.y = player.height;
+
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+  document.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('resize', onResize);
+
+  // UI start
+  startBtn.addEventListener('click', ()=> {
+    controls.lock();
+    startGame();
+  });
+
+  controls.addEventListener('lock', ()=>{
+    overlay.style.display = 'none';
+  });
+  controls.addEventListener('unlock', ()=>{
+    overlay.style.display = 'block';
+  });
+
+  // initial HUD
+  updateHUD();
+}
+
+// input handlers
+function onKeyDown(e){
+  if (!isRunning && e.code === 'KeyR') return;
+  switch(e.code){
+    case 'KeyW': move.forward = 1; break;
+    case 'KeyS': move.backward = 1; break;
+    case 'KeyA': move.left = 1; break;
+    case 'KeyD': move.right = 1; break;
+    case 'Space':
+      if (Math.abs(velocity.y) < 0.1) velocity.y = player.jumpSpeed;
+      break;
+    case 'KeyR': reload(); break;
+    case 'KeyP': debugSpawn(); break;
+  }
+}
+function onKeyUp(e){
+  switch(e.code){
+    case 'KeyW': move.forward = 0; break;
+    case 'KeyS': move.backward = 0; break;
+    case 'KeyA': move.left = 0; break;
+    case 'KeyD': move.right = 0; break;
+  }
+}
+function onMouseDown(e){
+  if (controls.isLocked === false) return;
+  if (e.button === 0) shoot();
+}
+
+// game control
+function startGame(){
+  isRunning = true;
+  health = 100; ammo = clipSize; reserve = 48;
+  zombies.forEach(z => scene.remove(z.mesh));
+  zombies = [];
+  bullets = [];
+  score = 0;
+  spawnTimer = 0;
+  updateHUD();
+  showMessage('', 0);
+}
+
+function gameOver(){
+  isRunning = false;
+  showMessage('Game Over<br>Score: ' + score + '<br><button id="retry">Restart</button>');
+  document.getElementById('retry').addEventListener('click', ()=> {
+    controls.lock();
+    startGame();
+  });
+}
+
+// HUD and messages
+function updateHUD(){
+  hud.health.textContent = Math.max(0, Math.round(health));
+  hud.ammo.textContent = ammo;
+  hud.reserve.textContent = reserve;
+  hud.score.textContent = score;
+  hud.alive.textContent = zombies.length;
+}
+function showMessage(txt, timeout=0){
+  msg.innerHTML = txt;
+  msg.style.display = txt ? 'block' : 'none';
+  if (timeout>0) setTimeout(()=>{ msg.style.display='none'; }, timeout*1000);
+}
+
+// shooting
+function shoot(){
+  if (!isRunning) return;
+  if (!canShoot) return;
+  if (ammo <= 0) { playClick(); reload(); return; }
+  ammo--; updateHUD();
+  canShoot = false;
+  setTimeout(()=> canShoot = true, 120); // fire rate
+
+  // muzzle flash / recoil effect
+  camera.rotation.x -= 0.02;
+
+  // raycast for hit
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = zombies.map(z => z.mesh);
+  const hit = ray.intersectObjects(hits, false)[0];
+  if (hit) {
+    const z = zombies.find(z=>z.mesh===hit.object);
+    if (z) {
+      damageZombie(z, 60); // hit
+    }
+  } else {
+    // spawn bullet tracer
+    const tracer = makeTracer();
+    tracer.position.copy(camera.position);
+    tracer.quaternion.copy(camera.quaternion);
+    bullets.push({ mesh: tracer, life: 0.25, speed: 180 });
+    scene.add(tracer);
+  }
+  playShot();
+}
+
+function makeTracer(){
+  const g = new THREE.CylinderGeometry(0.02, 0.02, 1, 6);
+  const m = new THREE.MeshBasicMaterial({ color: 0xffffaa });
+  const mesh = new THREE.Mesh(g,m);
+  mesh.rotateX(Math.PI/2);
+  mesh.translateZ(-0.5);
+  return mesh;
+}
+function playShot(){ /* placeholder - add audio if desired */ }
+function playClick(){ /* placeholder */ }
+
+// reload
+function reload(){
+  if (reserve <= 0 || ammo === clipSize) return;
+  const needed = clipSize - ammo;
+  const taken = Math.min(needed, reserve);
+  reserve -= taken;
+  // small delay
+  canShoot = false;
+  setTimeout(()=> { ammo += taken; canShoot = true; updateHUD(); }, 700);
+  updateHUD();
+}
+
+// zombies
+function spawnZombie(at){
+  const g = new THREE.CapsuleGeometry(0.5, 0.8, 4, 8);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5b6b4f, roughness:0.9, metalness:0.05 });
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.castShadow = true;
+  mesh.position.copy(at);
+  mesh.position.y = 0.9;
+  scene.add(mesh);
+  const z = {
+    mesh,
+    speed: 1.4 + Math.random()*1.2,
+    hp: 100,
+    state: 'roam',
+    lastAttack: 0
+  };
+  zombies.push(z);
+}
+
+function damageZombie(z, amount){
+  z.hp -= amount;
+  // simple blood effect
+  const s = new THREE.SphereGeometry(0.06, 6,6);
+  const m = new THREE.MeshBasicMaterial({ color: 0xff2d2d });
+  const p = new THREE.Mesh(s,m);
+  p.position.copy(z.mesh.position).add(new THREE.Vector3(0,0.6,0));
+  scene.add(p);
+  setTimeout(()=> scene.remove(p), 600);
+  if (z.hp <= 0) {
+    // kill
+    scene.remove(z.mesh);
+    zombies = zombies.filter(x => x !== z);
+    score += 10;
+    updateHUD();
+  }
+}
+
+// simple debug spawn
+function debugSpawn(){
+  spawnZombie(new THREE.Vector3((Math.random()-0.5)*40,0,(Math.random()-0.5)*40));
+  updateHUD();
+}
+
+// main loop
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, clock.getDelta());
+
+  if (controls.isLocked && isRunning) {
+    // movement
+    const forward = move.forward - move.backward;
+    const sideways = move.right - move.left;
+
+    // direction on XZ plane
+    const dir = new THREE.Vector3();
+    controls.getDirection(dir);
+    dir.y = 0;
+    dir.normalize();
+    const right = new THREE.Vector3().copy(dir).cross(new THREE.Vector3(0,1,0)).normalize();
+
+    tempVec.set(0,0,0);
+    tempVec.addScaledVector(dir, forward);
+    tempVec.addScaledVector(right, sideways);
+    tempVec.normalize();
+
+    // apply speeds
+    velocity.x += (tempVec.x * player.speed - velocity.x) * 10 * dt;
+    velocity.z += (tempVec.z * player.speed - velocity.z) * 10 * dt;
+    velocity.y += gravity * dt;
+
+    // integrate
+    controls.getObject().position.addScaledVector(velocity, dt);
+
+    // ground collision
+    if (controls.getObject().position.y <= player.height) {
+      velocity.y = 0;
+      controls.getObject().position.y = player.height;
+    }
+
+    // cap arena
+    controls.getObject().position.x = Math.max(-145, Math.min(145, controls.getObject().position.x));
+    controls.getObject().position.z = Math.max(-145, Math.min(145, controls.getObject().position.z));
+
+    // spawn zombies over time
+    spawnTimer += dt;
+    if (spawnTimer > spawnInterval) {
+      spawnTimer = 0;
+      const spawnPos = chooseSpawnPoint();
+      spawnZombie(spawnPos);
+      // gradually shorten spawn interval as difficulty increases
+      spawnInterval = Math.max(0.6, spawnInterval - 0.02);
+      updateHUD();
+    }
+
+    // update zombies
+    const playerPos = controls.getObject().position.clone();
+    zombies.forEach(z=>{
+      // compute vector to player
+      const toPlayer = playerPos.clone().sub(z.mesh.position);
+      const dist = toPlayer.length();
+      if (dist > 0.1) {
+        toPlayer.normalize();
+        z.mesh.position.addScaledVector(toPlayer, z.speed * dt);
+        // simple look
+        z.mesh.lookAt(playerPos.x, z.mesh.position.y, playerPos.z);
+      }
+
+      // attack if close
+      if (playerPos.distanceTo(z.mesh.position) < 1.2) {
+        const now = performance.now();
+        if (now - z.lastAttack > 800) {
+          z.lastAttack = now;
+          health -= 8;
+          if (health <= 0) {
+            health = 0; updateHUD(); gameOver(); return;
+          }
+        }
+      }
+    });
+
+    // bullets (tracers)
+    bullets.forEach(b=>{
+      // move forward in local forward (-Z)
+      const dir = new THREE.Vector3(0,0,-1).applyQuaternion(b.mesh.quaternion);
+      b.mesh.position.addScaledVector(dir, b.speed * dt);
+      b.life -= dt;
+      if (b.life <= 0) {
+        scene.remove(b.mesh);
+      } else {
+        // check hit with zombies
+        for (let i = zombies.length-1;i>=0;i--){
+          const z = zombies[i];
+          if (z && z.mesh.position.distanceTo(b.mesh.position) < 0.9) {
+            damageZombie(z, 80);
+            // remove tracer
+            scene.remove(b.mesh); b.life = -1; break;
+          }
+        }
+      }
+    });
+    bullets = bullets.filter(b=>b.life>0);
+
+    // small health regen if not attacked recently - optional
+    // update HUD
+    updateHUD();
+  }
+
+  // camera subtle bob when moving
+  renderer.render(scene, camera);
+}
+
+function chooseSpawnPoint(){
+  // spawn on circle around player
+  const angle = Math.random() * Math.PI*2;
+  const dist = 20 + Math.random()*30;
+  const px = controls.getObject().position.x + Math.cos(angle)*dist;
+  const pz = controls.getObject().position.z + Math.sin(angle)*dist;
+  return new THREE.Vector3(px,0,pz);
+}
+
+function onResize(){
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+// debug helpers (dev only) -------------------------------------------
+window.__debug = {
+  spawnZombie: (n=1)=>{
+    for (let i=0;i<n;i++) spawnZombie(chooseSpawnPoint());
+    updateHUD();
+  }
+};
+</script>
+</body>
+</html>
