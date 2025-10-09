@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D Zombie Shooter (Fixed)</title>
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#000; font-family:sans-serif; }
+  #hud,#overlay,#message,#crosshair { position:absolute; color:#fff; z-index:10; }
+  #hud { right:12px; top:12px; background:rgba(0,0,0,0.35); padding:10px 12px; border-radius:8px; }
+  #overlay { 
+    left:0; top:0; right:0; bottom:0; 
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.7); flex-direction:column; text-align:center;
+  }
+  #overlay button { margin-top:10px; padding:10px 20px; font-size:16px; }
+  #message {
+    left:50%; top:50%; transform:translate(-50%,-50%);
+    background:rgba(0,0,0,0.6); padding:20px; border-radius:10px;
+    display:none; text-align:center;
+  }
+  #crosshair {
+    left:50%; top:50%; transform:translate(-50%,-50%);
+    width:18px; height:18px; pointer-events:none;
+  }
+  #crosshair:before, #crosshair:after {
+    content:""; position:absolute; background:rgba(255,255,255,0.8);
+  }
+  #crosshair:before { left:8px; top:0; width:2px; height:18px; }
+  #crosshair:after { left:0; top:8px; width:18px; height:2px; }
+  .small { font-size:12px; opacity:0.8; }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <h1>3D Zombie Shooter</h1>
+  <p class="small">Click anywhere to start<br>WASD to move, Mouse to look, Click to shoot, R to reload, F for flashlight</p>
+  <button id="startBtn">Start Game</button>
+</div>
+
+<div id="hud">
+  <div>Health: <span id="health">100</span></div>
+  <div>Ammo: <span id="ammo">12</span> / <span id="reserve">48</span></div>
+  <div>Score: <span id="score">0</span></div>
+  <div>Wave: <span id="wave">1</span></div>
+  <div class="small">Zombies: <span id="alive">0</span></div>
+</div>
+
+<div id="message"></div>
+<div id="crosshair"></div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+
+let scene,camera,renderer,controls;
+let clock=new THREE.Clock();
+let zombies=[],bullets=[];
+let move={f:0,b:0,l:0,r:0};
+let velocity=new THREE.Vector3();
+let playerHeight=1.8;
+let health=100,ammo=12,reserve=48,clip=12,canShoot=true,playing=false;
+let spawnTimer=0,spawnDelay=2.2,wave=1,score=0;
+let flashlight;
+const gravity=-30;
+const speed=8;
+const hud={
+  health:document.getElementById('health'),
+  ammo:document.getElementById('ammo'),
+  reserve:document.getElementById('reserve'),
+  score:document.getElementById('score'),
+  wave:document.getElementById('wave'),
+  alive:document.getElementById('alive')
+};
+const msg=document.getElementById('message');
+const overlay=document.getElementById('overlay');
+const startBtn=document.getElementById('startBtn');
+
+init();
+animate();
+
+function init(){
+  scene=new THREE.Scene();
+  scene.fog=new THREE.FogExp2(0x000000,0.02);
+
+  camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,2000);
+  camera.position.set(0,playerHeight,5);
+
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth,innerHeight);
+  renderer.shadowMap.enabled=true;
+  document.body.appendChild(renderer.domElement);
+
+  controls=new PointerLockControls(camera,document.body);
+  scene.add(controls.getObject());
+
+  // lights
+  const ambient=new THREE.AmbientLight(0x404040);
+  scene.add(ambient);
+  flashlight=new THREE.SpotLight(0xffffff,1.4,60,Math.PI/9,0.3,1);
+  flashlight.position.set(0,playerHeight,0);
+  flashlight.target.position.set(0,playerHeight,-1);
+  flashlight.castShadow=true;
+  flashlight.visible=false;
+  scene.add(flashlight);
+  scene.add(flashlight.target);
+
+  // ground
+  const ground=new THREE.Mesh(
+    new THREE.PlaneGeometry(300,300),
+    new THREE.MeshStandardMaterial({color:0x111111,roughness:1})
+  );
+  ground.rotation.x=-Math.PI/2;
+  ground.receiveShadow=true;
+  scene.add(ground);
+
+  // obstacles
+  const boxGeo=new THREE.BoxGeometry(1.5,1.5,1.5);
+  for(let i=0;i<40;i++){
+    const box=new THREE.Mesh(boxGeo,new THREE.MeshStandardMaterial({color:0x222222}));
+    box.position.set((Math.random()-0.5)*100,0.75,(Math.random()-0.5)*100);
+    box.castShadow=true; box.receiveShadow=true;
+    scene.add(box);
+  }
+
+  // Pointer Lock setup — clicking anywhere triggers
+  document.body.addEventListener('click',()=>{
+    if(!controls.isLocked){
+      controls.lock();
+    }
+  });
+
+  controls.addEventListener('lock',()=>{
+    overlay.style.display='none';
+    if(!playing) startGame();
+  });
+  controls.addEventListener('unlock',()=>{
+    overlay.style.display='flex';
+  });
+
+  document.addEventListener('keydown',keyDown);
+  document.addEventListener('keyup',keyUp);
+  document.addEventListener('mousedown',mouseDown);
+  window.addEventListener('resize',()=>{ 
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+  });
+
+  updateHUD();
+}
+
+function startGame(){
+  playing=true;
+  health=100;ammo=12;reserve=48;score=0;wave=1;
+  zombies.forEach(z=>scene.remove(z.mesh));zombies=[];
+  bullets=[];spawnTimer=0;spawnDelay=2.2;
+  msg.style.display='none';
+  updateHUD();
+}
+
+function gameOver(){
+  playing=false;
+  msg.innerHTML=`<b>Game Over</b><br>Score: ${score}<br><small>Click to restart</small>`;
+  msg.style.display='block';
+}
+
+function keyDown(e){
+  switch(e.code){
+    case'KeyW':move.f=1;break;
+    case'KeyS':move.b=1;break;
+    case'KeyA':move.l=1;break;
+    case'KeyD':move.r=1;break;
+    case'Space':if(Math.abs(velocity.y)<0.1)velocity.y=10;break;
+    case'KeyR':reload();break;
+    case'KeyF':flashlight.visible=!flashlight.visible;break;
+  }
+}
+function keyUp(e){
+  switch(e.code){
+    case'KeyW':move.f=0;break;
+    case'KeyS':move.b=0;break;
+    case'KeyA':move.l=0;break;
+    case'KeyD':move.r=0;break;
+  }
+}
+function mouseDown(e){
+  if(!playing)return;
+  if(e.button===0)shoot();
+}
+
+function shoot(){
+  if(!canShoot||ammo<=0)return reload();
+  ammo--;canShoot=false;setTimeout(()=>canShoot=true,130);
+  const ray=new THREE.Raycaster();
+  ray.setFromCamera({x:0,y:0},camera);
+  const hit=ray.intersectObjects(zombies.map(z=>z.mesh))[0];
+  if(hit){
+    const z=zombies.find(z=>z.mesh===hit.object);
+    if(z)damageZombie(z,60);
+  }else{
+    const tracer=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,1,6),
+      new THREE.MeshBasicMaterial({color:0xffffaa}));
+    tracer.rotation.x=Math.PI/2;
+    tracer.position.copy(camera.position);
+    tracer.quaternion.copy(camera.quaternion);
+    bullets.push({mesh:tracer,life:0.3});
+    scene.add(tracer);
+  }
+  updateHUD();
+}
+function reload(){
+  if(reserve<=0||ammo===clip)return;
+  const need=clip-ammo;
+  const take=Math.min(need,reserve);
+  reserve-=take;
+  canShoot=false;
+  setTimeout(()=>{ammo+=take;canShoot=true;updateHUD();},900);
+}
+function spawnZombie(){
+  const angle=Math.random()*Math.PI*2;
+  const dist=20+Math.random()*20;
+  const x=camera.position.x+Math.cos(angle)*dist;
+  const z=camera.position.z+Math.sin(angle)*dist;
+  const geo=new THREE.CapsuleGeometry(0.5,0.9,4,8);
+  const mat=new THREE.MeshStandardMaterial({color:0x3a5a3a});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.position.set(x,0.9,z);
+  mesh.castShadow=true;
+  scene.add(mesh);
+  zombies.push({mesh,hp:100,speed:1.2+Math.random(),lastAttack:0});
+  updateHUD();
+}
+function damageZombie(z,amt){
+  z.hp-=amt;
+  if(z.hp<=0){
+    scene.remove(z.mesh);
+    zombies=zombies.filter(x=>x!==z);
+    score+=10;
+    if(zombies.length===0){wave++;spawnDelay=Math.max(0.6,spawnDelay-0.1);}
+  }
+  updateHUD();
+}
+function updateHUD(){
+  hud.health.textContent=Math.max(0,Math.round(health));
+  hud.ammo.textContent=ammo;
+  hud.reserve.textContent=reserve;
+  hud.score.textContent=score;
+  hud.wave.textContent=wave;
+  hud.alive.textContent=zombies.length;
+}
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(0.05,clock.getDelta());
+  if(playing&&controls.isLocked){
+    // move
+    const dir=new THREE.Vector3();
+    controls.getDirection(dir);
+    dir.y=0;dir.normalize();
+    const right=new THREE.Vector3().copy(dir).cross(new THREE.Vector3(0,1,0)).normalize();
+    const moveVec=new THREE.Vector3();
+    moveVec.addScaledVector(dir,move.f-move.b);
+    moveVec.addScaledVector(right,move.r-move.l);
+    moveVec.normalize();
+    velocity.x+=(moveVec.x*speed-velocity.x)*10*dt;
+    velocity.z+=(moveVec.z*speed-velocity.z)*10*dt;
+    velocity.y+=gravity*dt;
+    controls.getObject().position.addScaledVector(velocity,dt);
+    if(controls.getObject().position.y<playerHeight){
+      velocity.y=0;
+      controls.getObject().position.y=playerHeight;
+    }
+    // flashlight follow camera
+    flashlight.position.copy(camera.position);
+    const targetDir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).add(camera.position);
+    flashlight.target.position.copy(targetDir);
+
+    // spawn
+    spawnTimer+=dt;
+    if(spawnTimer>spawnDelay){
+      spawnTimer=0;
+      const n=1+Math.floor(wave/2);
+      for(let i=0;i<n;i++)spawnZombie();
+    }
+
+    // zombies
+    const playerPos=controls.getObject().position.clone();
+    for(const z of zombies){
+      const toP=playerPos.clone().sub(z.mesh.position);
+      const d=toP.length();
+      toP.normalize();
+      if(d>1)z.mesh.position.addScaledVector(toP,z.speed*dt);
+      z.mesh.lookAt(playerPos.x,z.mesh.position.y,playerPos.z);
+      if(d<1.2){
+        const now=performance.now();
+        if(now-z.lastAttack>900){
+          z.lastAttack=now;
+          health-=8;
+          if(health<=0){health=0;updateHUD();gameOver();break;}
+        }
+      }
+    }
+
+    // bullets
+    bullets.forEach(b=>{
+      const dir=new THREE.Vector3(0,0,-1).applyQuaternion(b.mesh.quaternion);
+      b.mesh.position.addScaledVector(dir,100*dt);
+      b.life-=dt;
+      if(b.life<=0){scene.remove(b.mesh);}
+    });
+    bullets=bullets.filter(b=>b.life>0);
+    updateHUD();
+  }
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
