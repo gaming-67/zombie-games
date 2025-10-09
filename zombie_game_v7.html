@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Night of the Rot — Enhanced (AI + Guns + Pickups)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  :root {
+    --hud-bg: rgba(4,4,6,0.55);
+    --accent: #d94b3d;
+    --muted: #d0d6dc;
+  }
+  html,body{height:100%;margin:0;background:#000;overflow:hidden;font-family:Inter,system-ui,Segoe UI,Helvetica,Arial}
+  canvas{display:block;width:100%;height:100vh}
+  #overlay{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:12;
+    background:linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.9));
+  }
+  .menu{background:rgba(0,0,0,0.6); padding:28px; border-radius:12px; width:min(620px,92%); color:#fff; box-shadow:0 8px 30px rgba(0,0,0,0.7)}
+  h1{margin:0 0 6px; font-size:28px}
+  .btn{background:var(--accent); color:#fff; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700}
+  .btn.secondary{background:#2c2c2c; margin-left:10px}
+  #hud{position:fixed; left:12px; top:12px; z-index:11; color:#fff; background:var(--hud-bg); padding:10px 12px; border-radius:10px; font-weight:600; min-width:240px}
+  #hud .line{display:flex; justify-content:space-between; gap:12px; align-items:center}
+  #hud small{color:var(--muted); font-weight:600}
+  #weaponUI{position:fixed; right:12px; bottom:12px; z-index:11; color:#fff; background:var(--hud-bg); padding:10px 12px; border-radius:10px; min-width:200px}
+  #crosshair{position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:10; pointer-events:none; font-size:18px; color:rgba(255,255,255,0.85)}
+  #gameOver{display:none; position:fixed; inset:0; z-index:13; background:rgba(0,0,0,0.86); display:flex; align-items:center; justify-content:center; color:#fff}
+  #gameOver .box{background:rgba(0,0,0,0.6); padding:24px; border-radius:12px; text-align:center}
+  .tiny{font-size:13px; color:var(--muted)}
+  .pickup{position:fixed; left:50%; transform:translateX(-50%); bottom:110px; z-index:11; color:#fff; pointer-events:none; font-weight:700; padding:6px 10px; border-radius:8px; background:rgba(0,0,0,0.6)}
+</style>
+</head>
+<body>
+  <div id="overlay">
+    <div class="menu">
+      <h1>Night of the Rot — Enhanced Edition</h1>
+      <div class="tiny">Improved AI (flanking & group behavior) • 3 weapons: Pistol / Shotgun / Rifle • Ammo, reloads, pickups, health packs</div>
+      <div style="margin-top:14px;">
+        <button id="startBtn" class="btn">Start Game</button>
+        <button id="tutorialBtn" class="btn secondary">Quick Controls</button>
+        <button id="muteBtn" class="btn secondary" style="float:right">Mute</button>
+      </div>
+      <div style="margin-top:16px; color:#ddd;">
+        Controls: WASD to move • Click canvas to lock pointer and look • Left click to shoot • R to reload • 1/2/3 to switch weapons • E to pick up nearby items.
+      </div>
+    </div>
+  </div>
+
+  <div id="hud" aria-live="polite">
+    <div class="line"><div>Health</div><div id="healthVal">100</div></div>
+    <div class="line"><div>Score</div><div id="scoreVal">0</div></div>
+    <div class="line"><div>Wave</div><div id="waveVal">0</div></div>
+  </div>
+
+  <div id="weaponUI">
+    <div id="weaponName">Pistol</div>
+    <div class="tiny" style="margin-top:6px">Ammo: <span id="ammoVal">12</span> / <span id="reserveVal">36</span></div>
+    <div class="tiny" id="reloadText" style="margin-top:6px;display:none">Reloading...</div>
+  </div>
+
+  <div id="crosshair">+</div>
+  <div id="pickupText" class="pickup" style="display:none"></div>
+
+  <div id="gameOver">
+    <div class="box">
+      <h1 id="goTitle">You Died</h1>
+      <div class="tiny" id="goScore">Score: 0</div>
+      <div style="margin-top:12px;">
+        <button id="retryBtn" class="btn">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Three.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+<script>
+/* ---------------------------------------------------------
+   Enhanced zombie game code
+   - Improved AI: states (idle, wander, chase, attack), simple flanking, separation (grouping)
+   - 3 weapons: pistol (semi), shotgun (pump, short range spread), rifle (auto)
+   - Ammo, reload, pickups (ammo / medkit), weapon switching
+   - Wave system: progressively harder
+---------------------------------------------------------*/
+
+const canvas = document.getElementById('gameCanvas');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const tutorialBtn = document.getElementById('tutorialBtn');
+const muteBtn = document.getElementById('muteBtn');
+const healthEl = document.getElementById('healthVal');
+const scoreEl = document.getElementById('scoreVal');
+const waveEl = document.getElementById('waveVal');
+const weaponNameEl = document.getElementById('weaponName');
+const ammoEl = document.getElementById('ammoVal');
+const reserveEl = document.getElementById('reserveVal');
+const reloadText = document.getElementById('reloadText');
+const pickupText = document.getElementById('pickupText');
+const go = document.getElementById('gameOver');
+const goScore = document.getElementById('goScore');
+const retryBtn = document.getElementById('retryBtn');
+
+let scene, camera, renderer, clock;
+let zombies = [], pickups = [], props = [];
+let running = false, muted=false;
+let health = 100, score = 0, wave = 0;
+let lastSpawn = 0, spawnInterval = 1800;
+const worldSize = 90;
+
+let audioCtx=null;
+function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+function sfx(freq=440, dur=0.06, type='sine', volume=0.12){
+  if(muted) return;
+  ensureAudio();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type=type; o.frequency.value = freq;
+  o.connect(g); g.connect(audioCtx.destination);
+  g.gain.value = 0.0001;
+  g.gain.exponentialRampToValueAtTime(volume, audioCtx.currentTime + 0.01);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+}
+
+/* ----------------------
+   Weapons config
+----------------------*/
+const weapons = {
+  pistol: {name:'Pistol', mag:12, reserve:48, fireRate: 300, damage:2, automatic:false, reloadTime:1200},
+  shotgun: {name:'Shotgun', mag:6, reserve:36, fireRate:700, damage:5, pellets:7, spread:0.15, automatic:false, reloadTime:1100},
+  rifle: {name:'Rifle', mag:30, reserve:120, fireRate:80, damage:1, automatic:true, reloadTime:1600}
+};
+let currentWeaponKey = 'pistol';
+let weaponState = {
+  pistol: {ammo: weapons.pistol.mag, reserve: weapons.pistol.reserve, reloading:false, lastShot:0},
+  shotgun: {ammo: weapons.shotgun.mag, reserve: weapons.shotgun.reserve, reloading:false, lastShot:0},
+  rifle: {ammo: weapons.rifle.mag, reserve: weapons.rifle.reserve, reloading:false, lastShot:0}
+};
+
+function changeWeapon(key){
+  currentWeaponKey = key;
+  weaponNameEl.textContent = weapons[key].name;
+  updateAmmoUI();
+}
+
+/* ----------------------
+   Three.js setup
+----------------------*/
+function initThree() {
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.016);
+
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2000);
+  camera.position.set(0,1.6,0);
+
+  renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio ? window.devicePixelRatio : 1);
+
+  // lights
+  const hemi = new THREE.HemisphereLight(0x9999aa, 0x222222, 0.8);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xfff0c8, 0.6);
+  dir.position.set(8,12,6);
+  scene.add(dir);
+
+  // ground
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldSize*2, worldSize*2, 8,8), new THREE.MeshStandardMaterial({color:0x0f0f10}));
+  ground.rotation.x = -Math.PI/2;
+  scene.add(ground);
+
+  // simple tombstones/props
+  for(let i=0;i<60;i++){
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.6, Math.random()*1.4 + 0.6, 0.2), new THREE.MeshStandardMaterial({color:0x222222}));
+    box.position.set((Math.random()-0.5)*worldSize, box.geometry.parameters.height/2, (Math.random()-0.5)*worldSize);
+    box.rotation.y = Math.random()*Math.PI*2;
+    scene.add(box);
+    props.push(box);
+  }
+
+  // particles / atmosphere
+  const particleCount = 600;
+  const geom = new THREE.BufferGeometry();
+  const pos = new Float32Array(particleCount*3);
+  for(let i=0;i<particleCount;i++){
+    pos[i*3] = (Math.random()-0.5)*worldSize*2;
+    pos[i*3+1] = Math.random()*12 + 1;
+    pos[i*3+2] = (Math.random()-0.5)*worldSize*2;
+  }
+  geom.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const particles = new THREE.Points(geom, new THREE.PointsMaterial({size:0.05, transparent:true, opacity:0.06}));
+  scene.add(particles);
+
+  clock = new THREE.Clock();
+
+  window.addEventListener('resize', onResize);
+  canvas.addEventListener('click', ()=> { if(running) canvas.requestPointerLock?.(); });
+
+  document.addEventListener('pointerlockchange', ()=> { controlsEnabled = !!document.pointerLockElement; });
+
+  window.addEventListener('mousedown', (e)=> { if(!running) return; if(e.button===0) attemptShoot(); });
+  window.addEventListener('keydown', (e)=> {
+    if(e.key === 'r' || e.key === 'R') reloadWeapon();
+    if(e.key === '1') changeWeapon('pistol');
+    if(e.key === '2') changeWeapon('shotgun');
+    if(e.key === '3') changeWeapon('rifle');
+    if(e.key === 'e' || e.key === 'E') tryPickup();
+    if(e.key === 'Escape') document.exitPointerLock?.();
+  });
+}
+
+/* ----------------------
+   Controls
+----------------------*/
+let controlsEnabled = false;
+const keys = {w:0,a:0,s:0,d:0,shift:0};
+function initControls(){
+  window.addEventListener('keydown', (e)=>{
+    if(e.repeat) return;
+    if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if(e.key.toLowerCase()==='w') keys.w=1;
+    if(e.key.toLowerCase()==='a') keys.a=1;
+    if(e.key.toLowerCase()==='s') keys.s=1;
+    if(e.key.toLowerCase()==='d') keys.d=1;
+    if(e.key==='Shift') keys.shift=1;
+  });
+  window.addEventListener('keyup', (e)=>{
+    if(e.key.toLowerCase()==='w') keys.w=0;
+    if(e.key.toLowerCase()==='a') keys.a=0;
+    if(e.key.toLowerCase()==='s') keys.s=0;
+    if(e.key.toLowerCase()==='d') keys.d=0;
+    if(e.key==='Shift') keys.shift=0;
+  });
+  window.addEventListener('mousemove', (e)=>{
+    if(!controlsEnabled) return;
+    const mvX = e.movementX || 0, mvY = e.movementY || 0;
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y -= mvX * 0.0024;
+    camera.rotation.x -= mvY * 0.0024;
+    camera.rotation.x = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, camera.rotation.x));
+  });
+}
+
+/* ----------------------
+   Spawning & Waves
+----------------------*/
+function startWave(){
+  wave++;
+  waveEl.textContent = wave;
+  // increase difficulty: shorten spawnInterval and increase batch
+  spawnInterval = Math.max(800, 1800 - (wave-1)*80);
+  // spawn initial batch
+  const initial = 3 + Math.floor(1.5 * wave);
+  for(let i=0;i<initial;i++) spawnZombie(true);
+}
+
+function spawnZombie(fromEdge=false){
+  // simple composite mesh
+  const mat = new THREE.MeshStandardMaterial({color:0x314011, roughness:1});
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.9,1.15,0.5), mat);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5), new THREE.MeshStandardMaterial({color:0x556633}));
+  head.position.set(0,0.95,0);
+  const group = new THREE.Group();
+  group.add(torso); group.add(head);
+
+  // spawn at random edge or near center depending
+  const angle = Math.random()*Math.PI*2;
+  const r = fromEdge ? worldSize*0.9 : (Math.random()*0.6 + 0.6)*worldSize*0.8;
+  group.position.set(Math.cos(angle)*r, 0.6, Math.sin(angle)*r);
+
+  // AI data
+  group.userData = {
+    hp: 3 + Math.floor(Math.random()*Math.min(4, 1 + wave/2)),
+    baseSpeed: 0.5 + Math.random()*0.8 + wave*0.03,
+    speed: 0.6,
+    state: 'wander', // wander, chase, attack, flanking
+    stateTime: 0,
+    lastGroan: 0,
+    lastDamage: 0,
+    targetOffset: new THREE.Vector3()
+  };
+
+  // minor scale variety
+  const scl = 0.9 + Math.random()*0.3;
+  group.scale.set(scl,scl,scl);
+
+  scene.add(group);
+  zombies.push(group);
+}
+
+/* ----------------------
+   AI utilities (steering-ish)
+----------------------*/
+function computeSeparation(z){
+  // move away from nearby zombies to avoid clumping
+  const sep = new THREE.Vector3();
+  let count = 0;
+  for(const o of zombies){
+    if(o === z) continue;
+    const d = z.position.distanceTo(o.position);
+    if(d < 2.0){
+      const diff = z.position.clone().sub(o.position).normalize().divideScalar(d);
+      sep.add(diff);
+      count++;
+    }
+  }
+  if(count>0) sep.divideScalar(count);
+  return sep;
+}
+
+/* ----------------------
+   Shooting & Hits
+----------------------*/
+function attemptShoot(){
+  const key = currentWeaponKey, w = weapons[key], state = weaponState[key];
+  if(state.reloading) return;
+  const now = performance.now();
+  if(now - state.lastShot < w.fireRate) return;
+  if(state.ammo <= 0){ reloadWeapon(); return; }
+
+  state.lastShot = now;
+  state.ammo--;
+  updateAmmoUI();
+
+  ensureAudio();
+  // small muzzle sound
+  sfx(1000 + Math.random()*400, 0.05, 'square', 0.14);
+
+  // Shooting behavior per weapon
+  const origin = new THREE.Vector3();
+  camera.getWorldPosition(origin);
+  const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+
+  if(key === 'shotgun'){
+    // spawn multiple pellets
+    for(let i=0;i<w.pellets;i++){
+      const spread = new THREE.Vector3(dir.x + (Math.random()-0.5)*w.spread, dir.y + (Math.random()-0.5)*w.spread, dir.z + (Math.random()-0.5)*w.spread).normalize();
+      rayDamage(origin, spread, w.damage + Math.floor(Math.random()*2), 6.0);
+    }
+  } else {
+    const dmg = w.damage;
+    rayDamage(origin, dir, dmg, key==='rifle' ? 80.0 : 120.0);
+  }
+
+  // small muzzle flash visual
+  flashMuzzle();
+  if(w.automatic && mouseHeld) { /* automatic handled by mousedown+loop if user holds */ }
+}
+
+function rayDamage(origin, direction, damage, maxRange){
+  // iterate zombies and find first intersect
+  const ray = new THREE.Raycaster(origin, direction, 0, maxRange);
+  let closest = null; let closestDist = Infinity;
+  for(const z of zombies){
+    const box = new THREE.Box3().setFromObject(z);
+    if(ray.ray.intersectsBox(box)){
+      const pt = ray.ray.intersectBox(box, new THREE.Vector3());
+      const d = origin.distanceTo(pt);
+      if(d < closestDist){ closestDist = d; closest = z; }
+    }
+  }
+  if(closest){
+    // apply hit (closer = more chance of head/crit)
+    const falloff = Math.max(0.6, 1 - closestDist / maxRange);
+    const applied = Math.max(1, Math.round(damage * falloff));
+    closest.userData.hp -= applied;
+    // hit feedback
+    smashHit(closest);
+    sfx(220 + Math.random()*80, 0.05, 'sawtooth', 0.12);
+    if(closest.userData.hp <= 0) killZombie(closest);
+  }
+}
+
+function smashHit(z){
+  z.children.forEach(m => {
+    if(m.material) m.material.emissive = new THREE.Color(0x330000);
+    setTimeout(()=> { if(m.material) m.material.emissive = new THREE.Color(0x000000); }, 120);
+  });
+}
+
+/* ----------------------
+   Muzzle flash
+----------------------*/
+function flashMuzzle(){
+  const el = document.createElement('div');
+  el.style.position='fixed'; el.style.left='50%'; el.style.top='58%';
+  el.style.transform='translate(-50%,-50%)'; el.style.width='20px'; el.style.height='12px';
+  el.style.borderRadius='6px'; el.style.background='rgba(255,200,120,0.9)'; el.style.zIndex=9999;
+  document.body.appendChild(el);
+  setTimeout(()=> el.remove(), 30);
+}
+
+/* ----------------------
+   Kill / Damage / Pickups
+----------------------*/
+function killZombie(z){
+  // remove and add score / chance for pickup
+  scene.remove(z);
+  zombies = zombies.filter(o => o !== z);
+  score += 10 + Math.floor(Math.random()*5) + (wave*2);
+  scoreEl.textContent = score;
+  sfx(160, 0.18, 'sine', 0.18);
+  // small chance to drop pickup
+  if(Math.random() < 0.25){
+    spawnPickup(z.position.clone());
+  }
+}
+
+function spawnPickup(pos){
+  const type = Math.random() < 0.45 ? 'ammo' : 'health';
+  const color = type === 'ammo' ? 0x2b6cff : 0xff6b6b;
+  const geom = new THREE.SphereGeometry(0.25, 8, 8);
+  const mat = new THREE.MeshStandardMaterial({color});
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.copy(pos).add(new THREE.Vector3(0,0.5,0));
+  mesh.userData = {type, spawn: performance.now()};
+  scene.add(mesh);
+  pickups.push(mesh);
+}
+
+/* ----------------------
+   Pick up handling
+----------------------*/
+function tryPickup(){
+  // pick nearest pickup in range
+  let nearest=null, nd=Infinity;
+  for(const p of pickups){
+    const d = p.position.distanceTo(camera.position);
+    if(d < 2.0 && d < nd){
+      nd = d; nearest = p;
+    }
+  }
+  if(nearest){
+    if(nearest.userData.type === 'health'){
+      health = Math.min(100, health + 35);
+      healthEl.textContent = health;
+      showPickupText('+35 HP');
+      sfx(640,0.08,'triangle',0.12);
+    } else {
+      // ammo: give reserve to current weapon randomly
+      // give a mix across weapons
+      for(const k of Object.keys(weaponState)){
+        weaponState[k].reserve += Math.floor(6 + Math.random()*12);
+      }
+      updateAmmoUI();
+      showPickupText('Ammo Pack');
+      sfx(920,0.08,'triangle',0.12);
+    }
+    scene.remove(nearest);
+    pickups = pickups.filter(p => p !== nearest);
+  }
+}
+
+function showPickupText(txt){
+  pickupText.textContent = txt; pickupText.style.display = 'block';
+  setTimeout(()=> pickupText.style.display = 'none', 1200);
+}
+
+/* ----------------------
+   Reload
+----------------------*/
+function reloadWeapon(){
+  const key = currentWeaponKey;
+  const w = weapons[key], st = weaponState[key];
+  if(st.reloading) return;
+  if(st.ammo >= w.mag) return;
+  if(st.reserve <= 0) return;
+  st.reloading = true;
+  reloadText.style.display = 'block';
+  setTimeout(()=> {
+    const need = w.mag - st.ammo;
+    const take = Math.min(need, st.reserve);
+    st.reserve -= take;
+    st.ammo += take;
+    st.reloading = false;
+    reloadText.style.display = 'none';
+    updateAmmoUI();
+    sfx(420,0.08,'sine',0.12);
+  }, w.reloadTime);
+}
+
+/* ----------------------
+   HUD update
+----------------------*/
+function updateAmmoUI(){
+  const st = weaponState[currentWeaponKey];
+  ammoEl.textContent = st.ammo;
+  reserveEl.textContent = st.reserve;
+}
+
+/* ----------------------
+   Loop & Update
+----------------------*/
+let lastTime = performance.now();
+let mouseHeld = false;
+window.addEventListener('mousedown', ()=>{ mouseHeld = true; });
+window.addEventListener('mouseup', ()=>{ mouseHeld = false; });
+
+function update(delta){
+  // movement
+  const moveSpeed = (keys.shift ? 6.2 : 3.4);
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  forward.y = 0; forward.normalize();
+  const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
+  right.y = 0; right.normalize();
+
+  const move = new THREE.Vector3();
+  if(keys.w) move.add(forward);
+  if(keys.s) move.sub(forward);
+  if(keys.a) move.sub(right);
+  if(keys.d) move.add(right);
+  if(move.lengthSq() > 0){
+    move.normalize().multiplyScalar(moveSpeed * delta);
+    camera.position.add(move);
+    camera.position.x = Math.max(-worldSize, Math.min(worldSize, camera.position.x));
+    camera.position.z = Math.max(-worldSize, Math.min(worldSize, camera.position.z));
+  }
+
+  // automatic fire for rifle if held
+  if(mouseHeld && weapons[currentWeaponKey].automatic){
+    attemptShoot();
+  }
+
+  // zombie spawn timing
+  if(performance.now() - lastSpawn > spawnInterval){
+    lastSpawn = performance.now();
+    const count = 1 + Math.floor(Math.random()*Math.min(4, 1 + Math.floor(wave/2)));
+    for(let i=0;i<count;i++) spawnZombie(true);
+  }
+
+  // update zombies
+  for(const z of zombies){
+    const ud = z.userData;
+    ud.stateTime += delta;
+    const toPlayer = new THREE.Vector3().subVectors(camera.position, z.position);
+    const dist = Math.hypot(toPlayer.x, toPlayer.z);
+
+    // simple finite-state machine:
+    if(ud.state === 'wander'){
+      // occasionally switch to chase if player close or random
+      if(dist < 12 || Math.random() < 0.01 + Math.min(0.03, 0.005 * wave)){
+        ud.state = 'chase'; ud.stateTime = 0;
+        // choose a flank offset direction
+        const side = Math.random() < 0.5 ? -1 : 1;
+        ud.targetOffset.set(side * (1.0 + Math.random()*1.2), 0, 0);
+      } else {
+        // small wandering jitter
+        z.position.x += (Math.random()-0.5)*0.02;
+        z.position.z += (Math.random()-0.5)*0.02;
+      }
+    } else if(ud.state === 'chase' || ud.state === 'flanking'){
+      // compute desired direction: aim at player with offset (for flanking)
+      const desired = new THREE.Vector3(camera.position.x, z.position.y, camera.position.z);
+      // flanking uses lateral target offset rotated by camera orientation
+      const offsetRot = ud.targetOffset.clone().applyAxisAngle(new THREE.Vector3(0,1,0), camera.rotation.y);
+      desired.add(offsetRot);
+      const dir = desired.clone().sub(z.position).setY(0).normalize();
+
+      // separation
+      const sep = computeSeparation(z).multiplyScalar(0.6);
+      dir.add(sep).normalize();
+
+      // move with group speed increase by wave
+      const spd = ud.baseSpeed * (1 + Math.min(0.8, wave * 0.03));
+      z.position.x += dir.x * spd * delta;
+      z.position.z += dir.z * spd * delta;
+
+      // occasionally switch to flanking to try to approach from side
+      if(ud.state === 'chase' && Math.random() < 0.002 + wave*0.0008) { ud.state = 'flanking'; ud.stateTime = 0; }
+
+      // if close enough, attack
+      if(dist < 1.1){
+        ud.state = 'attack';
+        ud.stateTime = 0;
+      }
+    } else if(ud.state === 'attack'){
+      // damage the player once per ~0.8s
+      if(!ud.lastDamage || performance.now() - ud.lastDamage > 800){
+        ud.lastDamage = performance.now();
+        health -= 6;
+        healthEl.textContent = health;
+        sfx(180, 0.06, 'sawtooth', 0.12);
+        if(health <= 0) endGame();
+      }
+      // back off briefly
+      if(ud.stateTime > 0.8) { ud.state='chase'; ud.stateTime=0; }
+    }
+
+    // groan sound occasionally
+    if(performance.now() - ud.lastGroan > 2200 + Math.random()*4000){
+      ud.lastGroan = performance.now();
+      sfx(120 + Math.random()*120, 0.12, 'triangle', 0.09);
+    }
+
+    // orient facing movement
+    const lookAt = new THREE.Vector3(camera.position.x, z.position.y, camera.position.z);
+    z.lookAt(lookAt);
+  }
+
+  // animate pickups (bob)
+  for(const p of pickups){
+    p.position.y = 0.5 + Math.sin(performance.now()/420 + p.position.x)*0.06;
+  }
+
+  // occasionally spawn passive pickups near center as wave rewards
+  if(Math.random() < 0.0008) spawnPickup(new THREE.Vector3((Math.random()-0.5)*10,0, (Math.random()-0.5)*10));
+
+}
+
+/* ----------------------
+   Game loop & render
+----------------------*/
+function loop(){
+  if(!running) return;
+  const t = performance.now();
+  const delta = Math.min(0.06, (t - lastTime)/1000);
+  lastTime = t;
+
+  update(delta);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+/* ----------------------
+   Start / End
+----------------------*/
+function startGame(){
+  // reset
+  health = 100; score = 0; wave = 0;
+  healthEl.textContent = health; scoreEl.textContent = score; waveEl.textContent = wave;
+  // clear scene zombies & pickups
+  zombies.forEach(z=> scene.remove(z)); zombies=[];
+  pickups.forEach(p=> scene.remove(p)); pickups=[];
+  // reset weapon state
+  for(const k of Object.keys(weaponState)){
+    weaponState[k].ammo = weapons[k].mag;
+    weaponState[k].reserve = weapons[k].reserve;
+    weaponState[k].reloading = false;
+    weaponState[k].lastShot = 0;
+  }
+  changeWeapon('pistol');
+  updateAmmoUI();
+
+  overlay.style.display = 'none';
+  go.style.display = 'none';
+  running = true;
+  lastTime = performance.now();
+  lastSpawn = performance.now();
+  initThreeIfNeeded();
+  startWave();
+  loop();
+  ensureAudio();
+  sfx(720,0.08,'sine',0.14);
+}
+
+function endGame(){
+  running = false;
+  go.style.display = 'flex';
+  goScore.textContent = 'Score: ' + score;
+  sfx(80, 0.6, 'sawtooth', 0.16);
+}
+
+/* ----------------------
+   Utilities & init
+----------------------*/
+function onResize(){
+  if(!camera || !renderer) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function initThreeIfNeeded(){
+  if(!scene) initThree();
+}
+
+/* ----------------------
+   UI wiring
+----------------------*/
+startBtn.addEventListener('click', ()=> startGame());
+retryBtn.addEventListener('click', ()=> startGame());
+muteBtn.addEventListener('click', ()=>{
+  muted = !muted;
+  muteBtn.textContent = muted ? 'Unmute' : 'Mute';
+});
+tutorialBtn.addEventListener('click', ()=>{
+  alert('Controls:\\nWASD - move \\nClick canvas to lock pointer and look \\nLeft click - shoot \\nR - reload \\n1/2/3 - switch weapons \\nE - pick up items (when close)');
+});
+
+/* ----------------------
+   Initialize controls / basic scene and a few demo zombies
+----------------------*/
+initThree();
+initControls();
+
+// add a few demo zombies near edges so menu shows them (not active until start)
+for(let i=0;i<4;i++) spawnZombie(true);
+
+/* ----------------------
+   Misc touches: helpful debug toggle
+----------------------*/
+let lastAutoSpawn = performance.now();
+
+</script>
+</body>
+</html>
