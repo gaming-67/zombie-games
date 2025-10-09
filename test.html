@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Night of the Rot — Ultimate Edition</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --hud-bg: rgba(10,10,12,0.6);
+    --accent: #d94b3d;
+    --muted: #c7cbd0;
+  }
+  html,body{height:100%;margin:0;background:#000;overflow:hidden;font-family:Inter,system-ui,Segoe UI,Helvetica,Arial}
+  canvas{display:block;width:100%;height:100vh}
+  #overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:40;background:linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.9))}
+  .menu{background:rgba(0,0,0,0.62); padding:28px;border-radius:12px; width:min(760px,94%); color:#fff; box-shadow:0 12px 40px rgba(0,0,0,0.7)}
+  h1{margin:0 0 6px;font-size:30px}
+  .btn{background:var(--accent); color:#fff; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700}
+  .btn.secondary{background:#2c2c2c; margin-left:10px}
+  #hud{position:fixed; left:14px; top:14px; z-index:35; color:#fff; background:var(--hud-bg); padding:10px 12px; border-radius:10px; font-weight:700; min-width:260px}
+  #weaponUI{position:fixed; right:14px; bottom:14px; z-index:35; color:#fff; background:var(--hud-bg); padding:10px 12px; border-radius:10px; min-width:220px}
+  #crosshair{position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:34; pointer-events:none; font-size:20px; color:rgba(255,255,255,0.85)}
+  #gameOver{display:none;position:fixed;inset:0;z-index:45;background:rgba(0,0,0,0.88);display:flex;align-items:center;justify-content:center;color:#fff}
+  #gameOver .box{background:rgba(0,0,0,0.6); padding:24px;border-radius:12px; text-align:center}
+  .hint{font-size:13px;color:var(--muted); margin-top:8px}
+  .pickup{position:fixed; left:50%; transform:translateX(-50%); bottom:120px; z-index:35; color:#fff; pointer-events:none; font-weight:800; padding:6px 10px; border-radius:8px; background:rgba(0,0,0,0.6)}
+</style>
+</head>
+<body>
+  <div id="overlay">
+    <div class="menu">
+      <h1>Night of the Rot — Ultimate Edition</h1>
+      <div class="hint">Improved AI, multiple zombie types, boss waves, more weapons, ADS, melee, particle effects, pickups & highscore.</div>
+      <div style="margin-top:14px;">
+        <button id="startBtn" class="btn">Start Game</button>
+        <button id="controlsBtn" class="btn secondary">Controls</button>
+        <button id="muteBtn" class="btn secondary" style="float:right">Mute</button>
+      </div>
+      <div style="margin-top:12px;color:#ddd">
+        Controls: WASD move • Click canvas to lock pointer/look • Left-click shoot • Right-click aim (ADS) • R reload • 1/2/3 switch weapons • F melee • E pick up • Escape to unlock pointer.
+      </div>
+    </div>
+  </div>
+
+  <div id="hud" aria-live="polite">
+    <div style="display:flex;justify-content:space-between"><div>Health</div><div id="healthVal">100</div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px"><div>Score</div><div id="scoreVal">0</div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px"><div>Wave</div><div id="waveVal">0</div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:6px"><div>Highscore</div><div id="highVal">0</div></div>
+  </div>
+
+  <div id="weaponUI">
+    <div id="weaponName">Pistol</div>
+    <div class="hint" style="margin-top:6px">Ammo: <span id="ammoVal">12</span> / <span id="reserveVal">36</span></div>
+    <div class="hint" id="reloadText" style="display:none;margin-top:6px">Reloading...</div>
+  </div>
+
+  <div id="crosshair">+</div>
+  <div id="pickupText" class="pickup" style="display:none"></div>
+
+  <div id="gameOver">
+    <div class="box">
+      <h1 id="goTitle">You Died</h1>
+      <div class="hint" id="goScore">Score: 0</div>
+      <div style="margin-top:12px;">
+        <button id="retryBtn" class="btn">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Three.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+<script>
+/* ============= Night of the Rot — Ultimate Edition (single file) =============
+   Features:
+   - Multiple zombie types (Walker, Runner, Tank, Crawler) + Boss spawn every 6 waves
+   - AI: FOV, finite state machine, flanking/dodge, separation/cohesion
+   - Weapons: pistol, shotgun, rifle (ADS with right-click), melee (F)
+   - Particles: blood, sparks, muzzle flash (no debug balls)
+   - Pickups: ammo packs, medkits
+   - Wave progression, score, localStorage highscore
+   - Particle pooling for performance
+   - All self-contained, no external assets required
+=============================================================================*/
+
+const canvas = document.getElementById('gameCanvas');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const controlsBtn = document.getElementById('controlsBtn');
+const muteBtn = document.getElementById('muteBtn');
+const healthEl = document.getElementById('healthVal');
+const scoreEl = document.getElementById('scoreVal');
+const waveEl = document.getElementById('waveVal');
+const highEl = document.getElementById('highVal');
+const weaponNameEl = document.getElementById('weaponName');
+const ammoEl = document.getElementById('ammoVal');
+const reserveEl = document.getElementById('reserveVal');
+const reloadText = document.getElementById('reloadText');
+const pickupText = document.getElementById('pickupText');
+const go = document.getElementById('gameOver');
+const goScore = document.getElementById('goScore');
+const retryBtn = document.getElementById('retryBtn');
+
+let scene, camera, renderer, clock;
+let running=false, muted=false;
+let health=100, score=0, wave=0;
+let zombies=[], pickups=[], props=[];
+const worldSize = 110;
+let lastSpawn = 0, spawnInterval = 1500;
+let lastWaveTime = 0;
+
+let audioCtx = null;
+function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();}
+function sfx(freq=440, dur=0.06, type='sine', vol=0.12){
+  if(muted) return;
+  ensureAudio();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  o.connect(g); g.connect(audioCtx.destination);
+  g.gain.value = 0.0001;
+  g.gain.exponentialRampToValueAtTime(vol, audioCtx.currentTime + 0.01);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+}
+
+/* ---------------- Weapons ---------------- */
+const weapons = {
+  pistol: {name:'Pistol', mag:12, reserve:72, fireRate:260, damage:3, automatic:false, reloadTime:900, adsSpread:0.012, hipSpread:0.06},
+  shotgun: {name:'Shotgun', mag:6, reserve:48, fireRate:720, damage:6, pellets:7, spread:0.18, automatic:false, reloadTime:1100, adsSpread:0.06, hipSpread:0.18},
+  rifle: {name:'Rifle', mag:30, reserve:150, fireRate:90, damage:1, automatic:true, reloadTime:1400, adsSpread:0.005, hipSpread:0.045}
+};
+let currentWeaponKey='pistol';
+let weaponState = {
+  pistol: {ammo:weapons.pistol.mag, reserve:weapons.pistol.reserve, reloading:false, lastShot:0},
+  shotgun: {ammo:weapons.shotgun.mag, reserve:weapons.shotgun.reserve, reloading:false, lastShot:0},
+  rifle: {ammo:weapons.rifle.mag, reserve:weapons.rifle.reserve, reloading:false, lastShot:0}
+};
+let aiming=false;
+let mouseHeld=false;
+let meleeCooldown=0;
+
+function changeWeapon(k){
+  currentWeaponKey=k;
+  weaponNameEl.textContent = weapons[k].name;
+  updateAmmoUI();
+}
+
+// ammo UI
+function updateAmmoUI(){
+  const st = weaponState[currentWeaponKey];
+  ammoEl.textContent = st.ammo;
+  reserveEl.textContent = st.reserve;
+}
+
+/* ---------------- Three.js init ---------------- */
+function initThree(){
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2500);
+  camera.position.set(0,1.6,0);
+
+  renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio ? window.devicePixelRatio : 1);
+
+  // lights
+  const hemi = new THREE.HemisphereLight(0x9999aa, 0x222222, 0.9);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xfff0c8, 0.6);
+  dir.position.set(8,12,6);
+  scene.add(dir);
+
+  // ground
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldSize*2, worldSize*2, 12,12), new THREE.MeshStandardMaterial({color:0x101010}));
+  ground.rotation.x = -Math.PI/2;
+  scene.add(ground);
+
+  // props - tombstones + trees + flickering lamp posts
+  for(let i=0;i<110;i++){
+    if(Math.random()<0.5){
+      const h = 0.6 + Math.random()*1.6;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.6, h, 0.25), new THREE.MeshStandardMaterial({color:0x222222}));
+      box.position.set((Math.random()-0.5)*worldSize, h/2, (Math.random()-0.5)*worldSize);
+      box.rotation.y = Math.random()*Math.PI*2;
+      scene.add(box); props.push(box);
+    } else {
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.6, 6), new THREE.MeshStandardMaterial({color:0x3b2b1a}));
+      const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.7,6,6), new THREE.MeshStandardMaterial({color:0x1b3b1b}));
+      const x=(Math.random()-0.5)*worldSize, z=(Math.random()-0.5)*worldSize;
+      trunk.position.set(x,0.8,z); leaves.position.set(x,1.4,z);
+      scene.add(trunk); scene.add(leaves); props.push(trunk); props.push(leaves);
+    }
+  }
+
+  // small lamp posts
+  for(let i=0;i<12;i++){
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,2,6), new THREE.MeshStandardMaterial({color:0x444444}));
+    pole.position.set((Math.random()-0.5)*worldSize,1,(Math.random()-0.5)*worldSize);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.12,6,6), new THREE.MeshStandardMaterial({emissive:0xfff1c6, emissiveIntensity:0.4, color:0x333333}));
+    bulb.position.set(pole.position.x, pole.position.y+1, pole.position.z);
+    scene.add(pole); scene.add(bulb);
+    // flicker
+    setInterval(()=>{ bulb.material.emissiveIntensity = 0.2 + Math.random()*0.5; }, 800 + Math.random()*1400);
+  }
+
+  clock = new THREE.Clock();
+  window.addEventListener('resize', onResize);
+  canvas.addEventListener('click', ()=>{ if(running) canvas.requestPointerLock?.(); });
+
+  document.addEventListener('pointerlockchange', ()=>{ controlsEnabled = !!document.pointerLockElement; });
+
+  // input
+  window.addEventListener('mousedown', (e)=>{ if(!running) return; if(e.button===0) { mouseHeld=true; attemptShoot(); } if(e.button===2) aiming = true; });
+  window.addEventListener('mouseup', (e)=>{ mouseHeld=false; if(e.button===2) aiming=false; });
+  window.addEventListener('keydown', (e)=>{ 
+    if(e.key==='r' || e.key==='R') reloadWeapon();
+    if(e.key==='1') changeWeapon('pistol');
+    if(e.key==='2') changeWeapon('shotgun');
+    if(e.key==='3') changeWeapon('rifle');
+    if(e.key==='f' || e.key==='F') meleeAttack();
+    if(e.key==='e' || e.key==='E') tryPickup();
+    if(e.key==='Escape') document.exitPointerLock?.();
+  });
+  // prevent context menu on right click in canvas
+  canvas.addEventListener('contextmenu', (e)=> e.preventDefault());
+}
+
+/* -------------- Controls -------------- */
+let controlsEnabled=false;
+const keys = {w:0,a:0,s:0,d:0,shift:0};
+function initControls(){
+  window.addEventListener('keydown',(e)=>{ if(e.repeat) return; if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return; if(e.key.toLowerCase()==='w') keys.w=1; if(e.key.toLowerCase()==='a') keys.a=1; if(e.key.toLowerCase()==='s') keys.s=1; if(e.key.toLowerCase()==='d') keys.d=1; if(e.key==='Shift') keys.shift=1; });
+  window.addEventListener('keyup',(e)=>{ if(e.key.toLowerCase()==='w') keys.w=0; if(e.key.toLowerCase()==='a') keys.a=0; if(e.key.toLowerCase()==='s') keys.s=0; if(e.key.toLowerCase()==='d') keys.d=0; if(e.key==='Shift') keys.shift=0; });
+  window.addEventListener('mousemove',(e)=>{ if(!controlsEnabled) return; const mvX = e.movementX || 0, mvY = e.movementY || 0; camera.rotation.order='YXZ'; camera.rotation.y -= mvX * 0.0024; camera.rotation.x -= mvY * 0.0024; camera.rotation.x = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, camera.rotation.x)); });
+}
+
+/* -------------- Particle pooling (blood/sparks) -------------- */
+const particlePool = [];
+const activeParticles = [];
+function makeParticleSystem(){
+  const geom = new THREE.BufferGeometry();
+  const max = 120;
+  const pos = new Float32Array(max*3);
+  geom.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  const mat = new THREE.PointsMaterial({size:0.09, transparent:true, opacity:0.9});
+  const pts = new THREE.Points(geom, mat);
+  pts.userData = {max, idx:0, alive:[]};
+  scene.add(pts);
+  particlePool.push(pts);
+}
+for(let i=0;i<6;i++) makeParticleSystem();
+
+function spawnParticles(position, color = 0x8b0000, count=18, speed=2.6){
+  // find a pool with free slots
+  for(const pool of particlePool){
+    const ud = pool.userData;
+    if(ud.alive.length + count <= ud.max){
+      const posAttr = pool.geometry.attributes.position.array;
+      for(let i=0;i<count;i++){
+        const id = ud.idx;
+        ud.idx = (ud.idx + 1) % ud.max;
+        const vx = (Math.random()-0.5) * speed;
+        const vy = Math.random()*speed*0.8 + 0.6;
+        const vz = (Math.random()-0.5) * speed;
+        // store particle as object for update
+        ud.alive.push({id, life:0, maxLife: 0.6 + Math.random()*0.5, px:position.x, py:position.y, pz:position.z, vx, vy, vz, color});
+        // write initial position
+        posAttr[id*3] = position.x; posAttr[id*3+1] = position.y; posAttr[id*3+2] = position.z;
+      }
+      // tint material
+      pool.material.color.setHex(color);
+      pool.geometry.attributes.position.needsUpdate = true;
+      return;
+    }
+  }
+}
+
+/* Update particle pools */
+function updateParticles(delta){
+  for(const pool of particlePool){
+    const ud = pool.userData;
+    const posAttr = pool.geometry.attributes.position.array;
+    // update every alive
+    for(let i=ud.alive.length-1;i>=0;i--){
+      const p = ud.alive[i];
+      p.life += delta;
+      p.vy -= 9.8 * delta * 0.8;
+      p.px += p.vx * delta; p.py += p.vy * delta; p.pz += p.vz * delta;
+      posAttr[p.id*3] = p.px; posAttr[p.id*3+1] = p.py; posAttr[p.id*3+2] = p.pz;
+      if(p.life >= p.maxLife) ud.alive.splice(i,1);
+    }
+    pool.geometry.attributes.position.needsUpdate = true;
+    // fade opacity slowly by life via material.opacity (simple global fade)
+    pool.material.opacity = 0.9; // static for simplicity
+  }
+}
+
+/* -------------- Zombie types & spawn -------------- */
+function spawnZombie(type=null, fromEdge=true){
+  // types: walker, runner, tank, crawler, boss
+  const t = type || (Math.random()<0.12 ? 'runner' : (Math.random()<0.06 ? 'tank' : (Math.random()<0.08 ? 'crawler' : 'walker')));
+  const mat = new THREE.MeshStandardMaterial({color: t==='tank' ? 0x2b3b1a : (t==='runner' ? 0x314011 : 0x2f3b12), roughness:1});
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(1,1.25,0.5), mat);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.55,0.55,0.55), new THREE.MeshStandardMaterial({color:0x556633}));
+  head.position.set(0,0.95,0);
+  const group = new THREE.Group(); group.add(torso); group.add(head);
+
+  // position
+  const angle = Math.random()*Math.PI*2;
+  const r = fromEdge ? worldSize*0.95 : (Math.random()*0.6 + 0.2)*worldSize*0.8;
+  group.position.set(Math.cos(angle)*r, 0.6, Math.sin(angle)*r);
+
+  // boss special
+  if(type === 'boss'){
+    group.scale.set(2.0,2.0,2.0);
+    group.userData = {type:'boss', hp: 120 + wave*30, baseSpeed: 0.3, state:'chase', stateTime:0, lastGroan:0, lastDamage:0};
+  } else {
+    // base stats by type
+    if(t==='walker') group.userData = {type:'walker', hp: 3 + Math.floor(Math.random()*2 + wave*0.2), baseSpeed:0.5 + Math.random()*0.2, state:'wander', stateTime:0, lastGroan:0, lastDamage:0, targetOffset:new THREE.Vector3()};
+    if(t==='runner') group.userData = {type:'runner', hp: 2 + Math.floor(wave*0.08), baseSpeed:0.9 + Math.random()*0.8, state:'wander', stateTime:0, lastGroan:0, lastDamage:0, targetOffset:new THREE.Vector3()};
+    if(t==='tank') group.userData = {type:'tank', hp: 8 + Math.floor(wave*1.2), baseSpeed:0.35 + Math.random()*0.15, state:'wander', stateTime:0, lastGroan:0, lastDamage:0, targetOffset:new THREE.Vector3()};
+    if(t==='crawler') group.userData = {type:'crawler', hp: 2 + Math.floor(wave*0.5), baseSpeed:0.45 + Math.random()*0.2, state:'wander', stateTime:0, lastGroan:0, lastDamage:0, stealth:true, targetOffset:new THREE.Vector3()};
+  }
+
+  scene.add(group);
+  zombies.push(group);
+}
+
+/* -------------- AI helpers -------------- */
+function computeSeparation(z){
+  const sep = new THREE.Vector3(); let count=0;
+  for(const o of zombies){ if(o===z) continue; const d = z.position.distanceTo(o.position); if(d < 2.0){ const diff = z.position.clone().sub(o.position).normalize().divideScalar(d); sep.add(diff); count++; } }
+  if(count>0) sep.divideScalar(count);
+  return sep;
+}
+function inFOV(z, maxAngle=50*Math.PI/180, maxDist=22){
+  // check distance then angle between camera forward and vector to zombie
+  const toZ = new THREE.Vector3().subVectors(z.position, camera.position); const horiz = Math.hypot(toZ.x,toZ.z);
+  if(horiz > maxDist) return false;
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); forward.y=0; forward.normalize();
+  const toZNorm = toZ.clone(); toZNorm.y=0; toZNorm.normalize();
+  const angle = Math.acos(Math.max(-1, Math.min(1, forward.dot(toZNorm))));
+  return angle < maxAngle;
+}
+
+/* -------------- Shooting & hits -------------- */
+function attemptShoot(){
+  const key = currentWeaponKey, w = weapons[key], st = weaponState[key];
+  if(st.reloading) return;
+  const now = performance.now();
+  if(now - st.lastShot < w.fireRate) return;
+  if(st.ammo <= 0){ reloadWeapon(); return; }
+  st.lastShot = now;
+  st.ammo--; updateAmmoUI();
+  ensureAudio();
+  sfx(900 + Math.random()*300, 0.05, 'square', 0.16);
+  const origin = new THREE.Vector3(); camera.getWorldPosition(origin);
+  const baseDir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+
+  const spread = aiming ? w.adsSpread || w.hipSpread*0.4 : w.hipSpread;
+  if(key === 'shotgun'){
+    for(let i=0;i<w.pellets;i++){
+      const dir = baseDir.clone().add(new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread)).normalize();
+      rayDamage(origin, dir, w.damage + Math.floor(Math.random()*2), 6.5 + (wave*0.1));
+    }
+  } else {
+    rayDamage(origin, baseDir.clone().add(new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread)).normalize(), w.damage, key==='rifle' ? 80 : 120);
+  }
+  flashMuzzle();
+}
+
+function rayDamage(origin, dir, damage, maxRange){
+  const ray = new THREE.Raycaster(origin, dir, 0, maxRange);
+  let closest=null, closestDist=Infinity;
+  for(const z of zombies){
+    const box = new THREE.Box3().setFromObject(z);
+    if(ray.ray.intersectsBox(box)){
+      const pt = ray.ray.intersectBox(box, new THREE.Vector3());
+      const d = origin.distanceTo(pt);
+      if(d < closestDist){ closestDist = d; closest = {z,pt}; }
+    }
+  }
+  if(closest){
+    const {z,pt} = closest;
+    const falloff = Math.max(0.5, 1 - closestDist/maxRange);
+    const applied = Math.max(1, Math.round(damage * falloff));
+    z.userData.hp -= applied;
+    spawnParticles(pt, 0x8b0000, 12, 3.2);
+    sfx(260 + Math.random()*80, 0.05, 'sawtooth', 0.12);
+    if(z.userData.hp <= 0) killZombie(z);
+    else {
+      // if hit while stealth crawler, reveal
+      if(z.userData.stealth) z.userData.stealth=false;
+      // chance the zombie will dodge (if runner)
+      if(z.userData.type === 'runner' && Math.random() < 0.3) { z.userData.state='dodge'; z.userData.stateTime=0; }
+    }
+  } else {
+    // impact on ground or prop -> small sparks
+    const missPoint = origin.clone().add(dir.clone().multiplyScalar(maxRange*0.9));
+    spawnParticles(missPoint, 0xffaa66, 6, 1.6);
+  }
+}
+
+/* -------------- Muzzle flash -------------- */
+function flashMuzzle(){
+  const el = document.createElement('div');
+  el.style.position='fixed'; el.style.left='50%'; el.style.top='58%';
+  el.style.transform='translate(-50%,-50%)'; el.style.width='28px'; el.style.height='14px';
+  el.style.borderRadius='8px'; el.style.background='rgba(255,230,170,0.94)'; el.style.zIndex=9999; el.style.pointerEvents='none';
+  document.body.appendChild(el);
+  setTimeout(()=> el.remove(), 36);
+}
+
+/* -------------- Kill / pickups -------------- */
+function killZombie(z){
+  // explosion-ish death
+  spawnParticles(z.position.clone().add(new THREE.Vector3(0,0.6,0)), 0x8b0000, 24, 4.2);
+  scene.remove(z);
+  zombies = zombies.filter(x=>x!==z);
+  const t = z.userData.type || 'walker';
+  let gain = 10;
+  if(t==='runner') gain += 3;
+  if(t==='tank') gain += 12;
+  if(t==='boss') gain += 220;
+  score += gain + Math.floor(Math.random()*6) + wave*2;
+  scoreEl.textContent = score;
+  sfx(160, 0.18, 'sine', 0.2);
+  // drop chance
+  if(Math.random() < 0.28) spawnPickup(z.position.clone());
+}
+
+/* -------------- Pickups -------------- */
+function spawnPickup(pos){
+  const type = Math.random() < 0.5 ? 'ammo' : 'health';
+  const color = type==='ammo' ? 0x2b6cff : 0xff6b6b;
+  const geom = new THREE.SphereGeometry(0.28, 8, 8);
+  const mat = new THREE.MeshStandardMaterial({color});
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.copy(pos).add(new THREE.Vector3(0,0.6,0));
+  mesh.userData = {type, spawn: performance.now()};
+  scene.add(mesh);
+  pickups.push(mesh);
+}
+
+function tryPickup(){
+  let nearest=null, nd=Infinity;
+  for(const p of pickups){ const d = p.position.distanceTo(camera.position); if(d < 2.0 && d < nd){ nd = d; nearest = p; } }
+  if(nearest){
+    if(nearest.userData.type === 'health'){
+      health = Math.min(100, health + 35); healthEl.textContent = health; showPickupText('+35 HP'); sfx(640,0.08,'triangle',0.12);
+    } else {
+      // random ammo to all weapons
+      for(const k of Object.keys(weaponState)) weaponState[k].reserve += 8 + Math.floor(Math.random()*12);
+      updateAmmoUI();
+      showPickupText('Ammo Pack');
+      sfx(920,0.08,'triangle',0.12);
+    }
+    scene.remove(nearest);
+    pickups = pickups.filter(p=>p!==nearest);
+  }
+}
+function showPickupText(txt){ pickupText.textContent = txt; pickupText.style.display='block'; setTimeout(()=> pickupText.style.display='none', 1200); }
+
+/* -------------- Reload / Melee -------------- */
+function reloadWeapon(){
+  const key = currentWeaponKey; const w = weapons[key]; const st = weaponState[key];
+  if(st.reloading) return; if(st.ammo >= w.mag) return; if(st.reserve <= 0) return;
+  st.reloading = true; reloadText.style.display='block';
+  setTimeout(()=> {
+    const need = w.mag - st.ammo; const take = Math.min(need, st.reserve);
+    st.reserve -= take; st.ammo += take; st.reloading=false; reloadText.style.display='none'; updateAmmoUI(); sfx(420,0.08,'sine',0.12);
+  }, w.reloadTime);
+}
+
+function meleeAttack(){
+  if(performance.now() < meleeCooldown) return;
+  meleeCooldown = performance.now() + 900;
+  sfx(480,0.06,'square',0.13);
+  // melee short ray
+  const origin = new THREE.Vector3(); camera.getWorldPosition(origin);
+  const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+  const ray = new THREE.Raycaster(origin, dir, 0, 2.0);
+  for(const z of zombies){
+    const box = new THREE.Box3().setFromObject(z);
+    if(ray.ray.intersectsBox(box)){
+      z.userData.hp -= 4 + Math.floor(Math.random()*3);
+      spawnParticles(z.position.clone(), 0x8b0000, 10, 3.2);
+      if(z.userData.hp <= 0) killZombie(z);
+      break;
+    }
+  }
+}
+
+/* -------------- Wave system -------------- */
+function startWave(){
+  wave++; waveEl.textContent = wave;
+  spawnInterval = Math.max(700, 1500 - (wave-1)*80);
+  // initial batch
+  const initial = 3 + Math.floor(1.3 * wave);
+  for(let i=0;i<initial;i++){
+    // every 6th wave spawn boss instead of some
+    if(wave % 6 === 0 && i===0) spawnZombie('boss', true);
+    else spawnZombie(null, true);
+  }
+}
+
+/* -------------- Update loop -------------- */
+let lastTime = performance.now();
+function update(delta){
+  // movement
+  const speed = (keys.shift ? 6.2 : 3.4);
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); forward.y=0; forward.normalize();
+  const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); right.y=0; right.normalize();
+  const move = new THREE.Vector3();
+  if(keys.w) move.add(forward); if(keys.s) move.sub(forward); if(keys.a) move.sub(right); if(keys.d) move.add(right);
+  if(move.lengthSq()>0){ move.normalize().multiplyScalar(speed*delta); camera.position.add(move); camera.position.x = Math.max(-worldSize, Math.min(worldSize, camera.position.x)); camera.position.z = Math.max(-worldSize, Math.min(worldSize, camera.position.z)); }
+
+  // auto fire if holding for rifle
+  if(mouseHeld && weapons[currentWeaponKey].automatic) attemptShoot();
+
+  // spawn zombies periodically
+  if(performance.now() - lastSpawn > spawnInterval){
+    lastSpawn = performance.now();
+    const batch = 1 + Math.floor(Math.random()*Math.min(4,1 + Math.floor(wave/2)));
+    for(let i=0;i<batch;i++) spawnZombie(null, true);
+  }
+
+  // update zombies AI
+  for(const z of zombies){
+    const ud = z.userData;
+    ud.stateTime = (ud.stateTime || 0) + delta;
+    const toPlayer = new THREE.Vector3().subVectors(camera.position, z.position);
+    const dist = Math.hypot(toPlayer.x, toPlayer.z);
+
+    // stealth behavior: crawlers try to remain hidden until close or noise
+    if(ud.stealth){
+      if(inFOV(z, 30*Math.PI/180, 14) || dist < 6) ud.stealth = false;
+      else { z.visible = Math.random() < 0.98 ? false : true; } // mostly invisible
+    } else z.visible = true;
+
+    // FSM
+    if(ud.type === 'boss'){
+      // boss: chase relentlessly, powerful attacks
+      const dir = camera.position.clone().setY(z.position.y).sub(z.position).normalize();
+      z.position.x += dir.x * ud.baseSpeed * (1 + wave*0.02) * delta * 0.9;
+      z.position.z += dir.z * ud.baseSpeed * (1 + wave*0.02) * delta * 0.9;
+      if(dist < 2.0 && (!ud.lastDamage || performance.now() - ud.lastDamage > 900)){
+        ud.lastDamage = performance.now();
+        health -= 18; healthEl.textContent = health; sfx(160,0.16,'sawtooth',0.16);
+        if(health <= 0) endGame();
+      }
+    } else {
+      // wander -> investigate -> chase -> flank -> dodge -> attack
+      if(ud.state === 'wander'){
+        if(dist < (ud.type==='runner' ? 16 : 12) || inFOV(z)){
+          ud.state='chase'; ud.stateTime=0;
+          ud.targetOffset.set((Math.random()-0.5)*1.6,0,(Math.random()-0.5)*1.6);
+        } else {
+          // idle jitter
+          z.position.x += (Math.random()-0.5) * 0.01;
+          z.position.z += (Math.random()-0.5) * 0.01;
+        }
+      } else if(ud.state === 'chase' || ud.state === 'flank'){
+        const desired = camera.position.clone().setY(z.position.y);
+        const offsetRot = ud.targetOffset.clone().applyAxisAngle(new THREE.Vector3(0,1,0), camera.rotation.y);
+        desired.add(offsetRot);
+        const dir = desired.clone().sub(z.position).setY(0).normalize();
+        const sep = computeSeparation(z).multiplyScalar(0.6);
+        dir.add(sep).normalize();
+        const spd = ud.baseSpeed * (1 + Math.min(0.8, wave*0.03));
+        z.position.x += dir.x * spd * delta;
+        z.position.z += dir.z * spd * delta;
+        if(dist < 1.25){
+          ud.state='attack'; ud.stateTime=0;
+        } else if(ud.state === 'chase' && Math.random() < 0.002 + wave*0.0008) { ud.state='flank'; ud.stateTime=0; ud.targetOffset.set((Math.random()-0.5)*2,0,(Math.random()-0.5)*2); }
+      } else if(ud.state === 'dodge'){
+        // simple sidestep away briefly
+        const side = (Math.random()<0.5?1:-1);
+        z.position.x += Math.cos(camera.rotation.y + side) * ud.baseSpeed * 3.6 * delta;
+        z.position.z += Math.sin(camera.rotation.y + side) * ud.baseSpeed * 3.6 * delta;
+        if(ud.stateTime > 0.35) ud.state='chase';
+      } else if(ud.state === 'attack'){
+        if(!ud.lastDamage || performance.now() - ud.lastDamage > 900){
+          ud.lastDamage = performance.now();
+          const dmg = ud.type==='tank' ? 12 : (ud.type==='runner' ? 6 : 6);
+          health -= dmg; healthEl.textContent = health; sfx(180,0.06,'sawtooth',0.12);
+          if(health <= 0) endGame();
+        }
+        if(ud.stateTime > 0.9) ud.state='chase';
+      }
+    }
+    // orientation
+    const lookAt = new THREE.Vector3(camera.position.x, z.position.y, camera.position.z);
+    z.lookAt(lookAt);
+  }
+
+  // pickups bob
+  for(const p of pickups) p.position.y = 0.5 + Math.sin(performance.now()/420 + p.position.x)*0.07;
+
+  // occasional free pickup drop in center as wave reward
+  if(Math.random() < 0.0009) spawnPickup(new THREE.Vector3((Math.random()-0.5)*10,0,(Math.random()-0.5)*10));
+
+  // update particles
+  updateParticles(delta);
+
+  // spawn new wave if few zombies remain
+  if(zombies.length < Math.max(1, 2 + Math.floor(wave/2)) && performance.now() - lastWaveTime > 4000){
+    lastWaveTime = performance.now();
+    startWave();
+  }
+}
+
+/* -------------- Render loop -------------- */
+let lastFrame = performance.now();
+function loop(){
+  if(!running) return;
+  const t = performance.now();
+  const delta = Math.min(0.06, (t - lastFrame)/1000);
+  lastFrame = t;
+  update(delta);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+/* -------------- Game start / end -------------- */
+function startGame(){
+  // reset
+  health=100; score=0; wave=0; healthEl.textContent=health; scoreEl.textContent=score; waveEl.textContent=wave;
+  // clear scene elements
+  zombies.forEach(z=>scene.remove(z)); zombies=[];
+  pickups.forEach(p=>scene.remove(p)); pickups=[];
+  // reset weapons
+  for(const k of Object.keys(weaponState)){ weaponState[k].ammo = weapons[k].mag; weaponState[k].reserve = weapons[k].reserve; weaponState[k].reloading=false; weaponState[k].lastShot=0; }
+  changeWeapon('pistol'); updateAmmoUI();
+  overlay.style.display='none'; go.style.display='none'; running=true;
+  lastFrame = performance.now(); lastSpawn = performance.now(); lastWaveTime = performance.now();
+  initThreeIfNeeded();
+  startWave();
+  loop();
+  ensureAudio(); sfx(720,0.08,'sine',0.14);
+}
+
+function endGame(){
+  running=false; go.style.display='flex'; goScore.textContent = 'Score: ' + score;
+  // highscore
+  const prevHigh = parseInt(localStorage.getItem('nor_high') || '0', 10);
+  if(score > prevHigh){ localStorage.setItem('nor_high', String(score)); highEl.textContent = score; sfx(960,0.28,'sine',0.2); } else sfx(120,0.6,'sawtooth',0.16);
+}
+
+/* -------------- Utils -------------- */
+function onResize(){ if(!camera || !renderer) return; camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+
+/* -------------- Ray damage helpers, spawn few initial zombies, init scene -------------- */
+function initThreeIfNeeded(){ if(!scene) initThree(); }
+initThree(); initControls();
+
+// create some demo zombies to make the main menu feel alive
+for(let i=0;i<6;i++) spawnZombie(null, true);
+
+// create initial particle systems already in initThree stage (done earlier)
+const storedHigh = parseInt(localStorage.getItem('nor_high') || '0',10); highEl.textContent = storedHigh;
+
+// UI wiring
+startBtn.addEventListener('click', ()=> startGame());
+retryBtn.addEventListener('click', ()=> startGame());
+muteBtn.addEventListener('click', ()=>{ muted = !muted; muteBtn.textContent = muted ? 'Unmute' : 'Mute'; });
+controlsBtn.addEventListener('click', ()=> { alert('Controls:\\nWASD - move\\nClick canvas to lock pointer\\nLeft click - shoot\\nRight click - aim (ADS)\\nR - reload\\n1/2/3 - switch weapons\\nF - melee\\nE - pick up items\\nEscape - unlock pointer'); });
+
+// input hold handling
+window.addEventListener('mousedown', ()=> mouseHeld = true);
+window.addEventListener('mouseup', ()=> mouseHeld = false);
+
+/* Safety: disable context menu */
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+/* End of game file */
+</script>
+</body>
+</html>
