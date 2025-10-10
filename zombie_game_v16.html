@@ -1,0 +1,51 @@
+<div id="loading-screen">
+  <div id="loading-bar-container" style="width: 50%; margin: 20% auto; background: #222; height: 20px;">
+    <div id="loading-bar" style="width: 0%; height: 100%; background: lime;"></div>
+  </div>
+  <p id="loading-text" style="text-align:center; color:white;">Loading 0%</p>
+</div>
+
+<script>
+const loadingScreen = document.getElementById("loading-screen");
+const loadingBar = document.getElementById("loading-bar");
+const loadingText = document.getElementById("loading-text");
+
+let assetsToLoad = 15;   // total assets (textures, models, sounds)
+let assetsLoaded = 0;
+
+// Simulated loader (replace with actual file loading events)
+function loadAsset(url) {
+  return new Promise((resolve) => {
+    const delay = 200 + Math.random() * 500; // simulate load time
+    setTimeout(() => {
+      assetsLoaded++;
+      const percent = Math.floor((assetsLoaded / assetsToLoad) * 100);
+      loadingBar.style.width = percent + "%";
+      loadingText.textContent = `Loading ${percent}%`;
+      resolve();
+    }, delay);
+  });
+}
+
+// Example: load all assets, then start game
+async function loadGame() {
+  const urls = Array.from({ length: assetsToLoad }, (_, i) => `asset${i}`);
+  for (const url of urls) {
+    await loadAsset(url);
+  }
+  finishLoading();
+}
+
+function finishLoading() {
+  loadingScreen.style.display = "none";
+  startGame(); // start your main game here
+}
+
+function startGame() {
+  console.log("Game started!");
+  // your game initialization code goes here
+}
+
+// start the loader
+loadGame();
+</script>
