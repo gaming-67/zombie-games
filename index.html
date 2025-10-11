@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Z-13: The Quarantine — Expanded</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+/* --- UI styling (kept compact) --- */
+:root{--accent:#c73b3b;--glass:rgba(6,6,8,0.66);--muted:#b9bcc0}
+html,body{height:100%;margin:0;background:#020306;color:#fff;font-family:system-ui,Segoe UI,Arial;overflow:hidden}
+canvas{display:block;width:100%;height:100vh}
+.center-full{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:999}
+.menu-card{width:min(1100px,94%);background:linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0.45));border-radius:12px;padding:16px;display:flex;gap:12px;backdrop-filter: blur(6px)}
+.brand h1{margin:0;font-size:34px}
+.btn{background:var(--accent);border:none;color:#fff;padding:10px 12px;border-radius:8px;cursor:pointer;font-weight:700}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+.small{font-size:13px;color:var(--muted)}
+#hud{position:fixed;left:12px;top:12px;z-index:951;background:var(--glass);padding:10px;border-radius:10px;display:none}
+#weaponUI{position:fixed;right:12px;bottom:12px;z-index:951;background:var(--glass);padding:10px;border-radius:10px;display:none}
+#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:945;display:none;font-size:22px}
+#pickupPrompt,#interactPrompt{position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:944;background:rgba(0,0,0,0.66);color:#fff;padding:8px 12px;border-radius:10px;display:none}
+#pauseOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:980}
+.pause-card{background:rgba(0,0,0,0.82);padding:18px;border-radius:12px;text-align:center;width:420px}
+.save-toast{position:fixed;right:12px;bottom:12px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.6);color:#fff;z-index:995}
+#minimapContainer{position:fixed;right:12px;bottom:12px;width:200px;height:200px;border-radius:8px;background:rgba(0,0,0,0.45);z-index:960;display:none}
+#minimapCanvas{width:100%;height:100%}
+.info-card{width:760px;padding:12px;border-radius:10px;background:linear-gradient(180deg,rgba(10,10,12,0.95),rgba(6,6,8,0.9));color:#fff}
+</style>
+</head>
+<body>
+
+<!-- Canvas -->
+<canvas id="viewport"></canvas>
+
+<!-- Menu overlay -->
+<div id="menuOverlay" class="center-full">
+  <div class="menu-card">
+    <div style="flex:1">
+      <div style="display:flex;align-items:center;gap:12px">
+        <svg width="64" height="64" viewBox="0 0 24 24"><rect rx="4" width="24" height="24" fill="#0b0b0d"/><path d="M6 9h12v6H6z" fill="#c73b3b"/></svg>
+        <div>
+          <h1>Z-13: The Quarantine</h1>
+          <div class="small">Survival horror — Prototype</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;color:var(--muted)">
+        Cinematic menu • Play → Campaign (progressive weapons & waves) • F flicklight • E pick up • Esc pause
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+      <button id="btnPlay" class="btn">Play</button>
+      <button id="btnQuick" class="btn ghost">Quick Wave</button>
+      <button id="btnHow" class="btn ghost">How to Play</button>
+      <button id="btnSettings" class="btn ghost">Settings</button>
+      <button id="btnCredits" class="btn ghost">Credits</button>
+      <button id="btnLoad" class="btn ghost">Load Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- How to / Settings / Credits -->
+<div id="how" class="center-full" style="display:none"><div class="info-card">
+  <h2>How to Play</h2>
+  <p><strong>Movement:</strong> WASD • <strong>Look:</strong> Mouse • <strong>Shoot:</strong> Left click • R reload • 1–6 weapons • F flashlight • E pick up • M map • Esc pause</p>
+  <div style="text-align:right"><button id="howBack" class="btn">Back</button></div>
+</div></div>
+
+<div id="settingsPanel" class="center-full" style="display:none"><div class="info-card">
+  <h2>Settings</h2>
+  <div style="display:flex;gap:12px;align-items:center">
+    <div>Sound:</div><input id="soundToggle" type="checkbox" checked>
+    <div style="margin-left:24px">Shadows:</div><select id="shadowSel"><option value="on">On</option><option value="off">Off</option></select>
+  </div>
+  <div style="text-align:right;margin-top:12px"><button id="settingsBackBtn" class="btn">Back</button></div>
+</div></div>
+
+<div id="creditsBox" class="center-full" style="display:none"><div class="info-card"><h2>Credits</h2><p>Prototype by ChatGPT — you!</p><div style="text-align:right"><button id="creditsBackBtn" class="btn">Back</button></div></div></div>
+
+<!-- HUD -->
+<div id="hud"><div>HP <b id="hp">100</b> &nbsp; Wave <b id="wave">0</b> &nbsp; Score <b id="score">0</b></div>
+<div style="font-size:12px;color:var(--muted)">Battery <span id="bat">100%</span> • Infection <span id="inf">0%</span></div></div>
+<div id="weaponUI" style="display:none"><div id="wname">Pistol</div><div style="font-size:12px">Ammo <span id="ammo">12</span> / <span id="reserve">48</span></div></div>
+<div id="crosshair" style="display:none">+</div>
+<div id="pickupPrompt" style="display:none">[E] Pick up</div>
+<div id="interactPrompt" style="display:none">[T] Interact</div>
+
+<div id="pauseOverlay"><div class="pause-card">
+  <h2>Paused</h2>
+  <div style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+    <button id="resumeBtn" class="btn">Resume</button>
+    <button id="saveBtn" class="btn">Save</button>
+    <button id="mainMenuBtn" class="btn ghost">Main Menu</button>
+  </div>
+</div></div>
+
+<div id="minimapContainer" style="display:none"><canvas id="minimapCanvas"></canvas></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script>
+/* ===== Z-13 Expanded single-file playable prototype =====
+   - Adds more weapons, AI, pickups, colored zombies, fixes start-death bug
+   - Single file for quick testing. Open in modern Chrome/Firefox.
+*/
+
+/* ---------- quick config ---------- */
+const canvas = document.getElementById('viewport');
+const menuOverlay = document.getElementById('menuOverlay');
+const hud = document.getElementById('hud');
+const weaponUI = document.getElementById('weaponUI');
+const crosshair = document.getElementById('crosshair');
+const minimapContainer = document.getElementById('minimapContainer');
+const minimapCanvas = document.getElementById('minimapCanvas');
+
+let menuScene, menuCam, menuRenderer, menuAnim;
+let renderer, scene, camera;
+let audioCtx=null;
+function sfx(freq=440,dur=0.06,type='sine',vol=0.12){ if(!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=type; o.frequency.value=freq; o.connect(g); g.connect(audioCtx.destination); g.gain.value=0.0001; g.gain.linearRampToValueAtTime(vol,audioCtx.currentTime+0.01); o.start(); o.stop(audioCtx.currentTime+dur); g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+dur); }
+function ensureAudio(){ if(!audioCtx){ try{ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx=null; } } }
+
+/* ---------- game state ---------- */
+let running=false, paused=false, gameStarted=false;
+let playerHP=100, battery=100, infection=0;
+let score=0, wave=0, zombiesThisWave=0, killsThisWave=0;
+let zombies=[], pickups=[], props=[], survivors=[];
+let keys={}; let controlsEnabled=false;
+let weaponIndex=0, currentWeapon='pistol';
+let weaponState={}, inventory={grenades:1,medkits:1,armor:0};
+let lastSpawnTime=0, lastFrame=performance.now();
+let flashlight=null, flashlightOn=false;
+const MAX_ZOMBIES = 90;
+
+/* ---------- weapons ---------- */
+const weapons = {
+  pistol:{name:'Pistol',mag:12,reserve:60,rate:260,damage:8,auto:false,reload:900,unlockWave:0},
+  smg:{name:'SMG',mag:30,reserve:120,rate:70,damage:3,auto:true,reload:1000,unlockWave:2},
+  shotgun:{name:'Shotgun',mag:6,reserve:36,rate:850,damage:16,pellets:7,auto:false,reload:1400,unlockWave:3},
+  rifle:{name:'Rifle',mag:20,reserve:80,rate:120,damage:12,auto:true,reload:1600,unlockWave:4},
+  sniper:{name:'Sniper',mag:5,reserve:15,rate:900,damage:48,auto:false,reload:2000,unlockWave:5},
+  flamethrower:{name:'Flamethrower',mag:100,reserve:200,rate:60,damage:0.9,auto:true,reload:4000,unlockWave:6},
+  bat:{name:'Bat',mag:1,reserve:0,rate:400,damage:18,melee:true,auto:false,unlockWave:0}
+};
+for(const k in weapons) weaponState[k] = {ammo:weapons[k].mag, reserve:weapons[k].reserve, reloading:false, lastShot:0};
+
+/* ---------- menu cinematic ---------- */
+function initMenuCinematic(){
+  menuRenderer = new THREE.WebGLRenderer({canvas,antialias:true});
+  menuRenderer.setSize(innerWidth, innerHeight);
+  menuRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+  menuScene = new THREE.Scene();
+  menuScene.background = new THREE.Color(0x05060a);
+  menuCam = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 2000);
+  menuCam.position.set(0,40,120);
+  const amb = new THREE.AmbientLight(0x10121a,0.9); menuScene.add(amb);
+  const moon = new THREE.DirectionalLight(0x6fa2ff,0.33); moon.position.set(-80,120,40); menuScene.add(moon);
+
+  // skyline blocks
+  const city = new THREE.Group();
+  const grid = 10;
+  const spacing = 18;
+  for(let x=-grid;x<=grid;x++){
+    for(let z=-grid;z<=grid;z++){
+      const w=8+Math.random()*16; const h=10+Math.random()*60; const d=8+Math.random()*16;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color:0x0b0c0f, roughness:0.9}));
+      b.position.set(x*spacing+(Math.random()-0.5)*6, h/2 - 2 + Math.random()*6, z*spacing + (Math.random()-0.5)*6);
+      // add tiny window sprites as children for flicker
+      const lights=[];
+      const cols = Math.floor(w/2), rows = Math.floor(h/3);
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          if(Math.random()<0.12){
+            const sp = new THREE.Sprite(new THREE.SpriteMaterial({color:0x6fa2ff,opacity:0.02}));
+            sp.scale.set(1.2,0.8,1); sp.position.set((c-cols/2)*0.5 + (Math.random()-0.5)*0.05, (r-rows/2)*0.8 + (Math.random()-0.5)*0.05, 0.51);
+            sp.userData = {phase:Math.random()*Math.PI*2, warm:Math.random()<0.6};
+            b.add(sp); lights.push(sp);
+          }
+        }
+      }
+      b.userData.windowSprites=lights;
+      city.add(b);
+    }
+  }
+  city.scale.set(1.4,1.4,1.4);
+  menuScene.add(city); menuScene.userData.city=city;
+  menuOverlay.style.display='flex';
+  animateMenu();
+}
+function animateMenu(){
+  menuAnim = requestAnimationFrame(animateMenu);
+  const t=performance.now()*0.001;
+  // orbit camera
+  const radius=120, speed=0.02;
+  menuCam.position.x = Math.cos(t*speed)*radius; menuCam.position.z = Math.sin(t*speed)*(radius*0.9);
+  menuCam.position.y = 38 + Math.sin(t*0.12)*7; menuCam.lookAt(0,8,0);
+  // flicker
+  menuScene.traverse(obj=>{
+    if(obj.type==='Sprite' && obj.userData){
+      const p=obj.userData; const flick = 0.2 + (Math.sin(t*6 + p.phase)*0.5 + Math.random()*0.12);
+      obj.material.opacity = 0.02 + Math.max(0,Math.min(1,flick))*0.15;
+      obj.material.color.setHex(p.warm?0xffd08a:0x6fa2ff);
+    }
+  });
+  menuRenderer.render(menuScene, menuCam);
+}
+
+/* ---------- stop menu ---------- */
+function stopMenu(){
+  cancelAnimationFrame(menuAnim);
+  menuOverlay.style.display='none';
+  if(menuRenderer){ try{ menuRenderer.dispose(); }catch(e){} menuRenderer=null; }
+  menuScene=null;
+}
+
+/* ---------- full game init ---------- */
+function initGameScene(){
+  renderer = new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x07070a,0.012);
+
+  camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 4000);
+  camera.position.set(0,1.6,0);
+
+  const moon = new THREE.DirectionalLight(0x9fbfff, 0.9); moon.position.set(-48,140,18); moon.castShadow=true; scene.add(moon);
+  const amb = new THREE.AmbientLight(0x202225,0.45); scene.add(amb);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000,4000), new THREE.MeshStandardMaterial({color:0x0b0d0f,roughness:1}));
+  ground.rotation.x = -Math.PI/2; ground.receiveShadow=true; scene.add(ground);
+
+  initParticlePools();
+  generateCityLarge();
+  ensureFlashlight();
+  initControls();
+  initMinimap();
+
+  hud.style.display='block'; weaponUI.style.display='block'; crosshair.style.display='block';
+  gameStarted=true; running=true; paused=false; lastFrame=performance.now(); lastSpawnTime=performance.now();
+  startWave(); loop();
+}
+
+/* ---------- map generation (buildings + interiors spawn points) ---------- */
+function generateCityLarge(){
+  props=[];
+  for(let i=0;i<90;i++){
+    const w=8+Math.random()*30,h=8+Math.random()*60,d=8+Math.random()*28;
+    const x=(Math.random()-0.5)*1200,z=(Math.random()-0.5)*1200;
+    const mat=new THREE.MeshStandardMaterial({color:0x22272b,roughness:0.95});
+    const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); b.position.set(x,h/2,z); b.castShadow=true; scene.add(b); props.push({mesh:b,type:'building'});
+    // inside/loot points:
+    if(Math.random()<0.28){
+      const lx=x + (Math.random()-0.5)*(w-2), lz=z + (Math.random()-0.5)*(d-2);
+      spawnPickup(new THREE.Vector3(lx,0.6,lz), Math.random()<0.45?'ammo': (Math.random()<0.5?'medkit':'antiviral'));
+    }
+  }
+  // spawn some survivors
+  for(let i=0;i<12;i++) spawnSurvivor(new THREE.Vector3((Math.random()-0.5)*800,0,(Math.random()-0.5)*800));
+  // lore
+  for(let i=0;i<16;i++) createLore('lore-'+i,'Log '+(i+1),'Fragmented note');
+}
+
+/* ---------- particle system ---------- */
+let particlePools=[];
+function initParticlePools(){ particlePools=[]; const pools=6; for(let i=0;i<pools;i++){ const max=300; const geom=new THREE.BufferGeometry(); const arr=new Float32Array(max*3); geom.setAttribute('position', new THREE.BufferAttribute(arr,3)); const mat=new THREE.PointsMaterial({size:0.08,transparent:true,opacity:0.95}); const pts=new THREE.Points(geom,mat); pts.userData={max,alive:[]}; scene && scene.add(pts); particlePools.push(pts); } }
+function spawnParticles(pos,color=0x8b0000,count=12,speed=3){ for(const pool of particlePools){ const ud=pool.userData; if(ud.alive.length + count <= ud.max){ for(let i=0;i<count;i++){ ud.alive.push({px:pos.x,py:pos.y,pz:pos.z,vx:(Math.random()-0.5)*speed,vy:Math.random()*speed*0.6+0.6,vz:(Math.random()-0.5)*speed,life:0,max:0.4+Math.random()*0.6}); } pool.material.color.setHex(color); pool.geometry.attributes.position.needsUpdate=true; return; } } }
+function updateParticles(dt){ for(const pool of particlePools){ const ud=pool.userData; const arr=pool.geometry.attributes.position.array; let k=0; for(let i=ud.alive.length-1;i>=0;i--){ const p=ud.alive[i]; p.life += dt; p.vy -= 9.8*dt*0.6; p.px += p.vx*dt; p.py += p.vy*dt; p.pz += p.vz*dt; arr[k*3]=p.px; arr[k*3+1]=p.py; arr[k*3+2]=p.pz; k++; if(p.life>=p.max) ud.alive.splice(i,1); } pool.geometry.attributes.position.needsUpdate=true; } }
+
+/* ---------- lore / pickups / survivors ---------- */
+let loreDB = {}, collectedLore={};
+function createLore(id,title,text){ loreDB[id]={id,title,text}; const pos=new THREE.Vector3((Math.random()-0.5)*600,0.6 + Math.random()*1.2,(Math.random()-0.5)*600); const m=new THREE.Mesh(new THREE.SphereGeometry(0.24,8,8), new THREE.MeshStandardMaterial({color:0x78ccff,emissive:0x78ccff,emissiveIntensity:0.6})); m.position.copy(pos); m.userData={lore:true,id}; scene.add(m); pickups.push(m); addMinimapMarkerFor(m,'loot'); }
+function spawnPickup(pos,type='ammo'){ const color = type==='ammo'?0x2b6cff:(type==='medkit'?0xff6b6b:(type==='antiviral'?0x7af2c7:0xffd46b)); const m=new THREE.Mesh(new THREE.SphereGeometry(0.28,10,10), new THREE.MeshStandardMaterial({color:color,emissive:color,emissiveIntensity:0.3})); m.position.copy(pos); m.userData={pickup:true,type}; scene.add(m); pickups.push(m); addMinimapMarkerFor(m,'loot'); return m; }
+function spawnSurvivor(pos){ const body=new THREE.Mesh(new THREE.BoxGeometry(0.6,1.2,0.4), new THREE.MeshStandardMaterial({color:0x8fb38f})); const head=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.36,0.36), new THREE.MeshStandardMaterial({color:0xd9bba6})); const g=new THREE.Group(); g.add(body); g.add(head); g.position.set(pos.x,0,pos.z); g.userData={type:'survivor',trade:{ammo:40,medkit:80},hp:100}; scene.add(g); survivors.push(g); addMinimapMarkerFor(g,'survivor'); }
+
+/* ---------- pickup handling ---------- */
+function tryPickup(){
+  // lore or pickups within 2 units
+  for(const p of pickups.slice()){
+    if(p.position.distanceTo(camera.position) < 2.2){
+      const t = p.userData.type || (p.userData.lore? 'lore' : 'loot');
+      try{ scene.remove(p); }catch(e){} pickups.splice(pickups.indexOf(p),1); removeMinimapMarkerFor(p);
+      if(t==='ammo'){ for(const k in weaponState) weaponState[k].reserve += 8 + Math.floor(Math.random()*22); score += 5; showToast('Picked up ammo'); sfx(800,0.04,'triangle',0.12);}
+      else if(t==='medkit'){ playerHP = Math.min(100, playerHP + 42); updateHUD(); showToast('Medkit used'); sfx(780,0.06,'sine',0.12); }
+      else if(t==='antiviral'){ infection = Math.max(0, infection - 44); updateHUD(); showToast('Antiviral'); sfx(780,0.06,'triangle',0.12); }
+      else { score += 12; showToast('Loot'); sfx(900,0.06,'sine',0.12); }
+      return;
+    }
+  }
+}
+
+/* ---------- weapons fire / damage ---------- */
+function updateWeaponUI(){
+  document.getElementById('wname').textContent = weapons[currentWeapon].name || currentWeapon;
+  const st = weaponState[currentWeapon]; document.getElementById('ammo').textContent = st.ammo; document.getElementById('reserve').textContent = st.reserve;
+}
+function attemptShoot(){
+  const w = weapons[currentWeapon]; const st = weaponState[currentWeapon];
+  if(!w) return;
+  if(st.reloading) return;
+  const now = performance.now();
+  if(now - st.lastShot < w.rate) return;
+  if(st.ammo <= 0){ reloadWeapon(); return; }
+  st.lastShot = now; st.ammo--; updateWeaponUI(); ensureAudio();
+  if(w.melee){ sfx(360,0.08,'square',0.12); meleeAttack(2.4,w.damage); }
+  else if(currentWeapon==='shotgun'){ for(let i=0;i<(w.pellets||7);i++){ fireRay(0.18, w.damage+Math.floor(Math.random()*4), 12); } sfx(640,0.06,'sawtooth',0.18); }
+  else if(currentWeapon==='sniper'){ fireRay(0.002, w.damage, 1200); sfx(1200,0.06,'triangle',0.22); }
+  else if(currentWeapon==='flamethrower'){ flameBurst(); }
+  else { fireRay(0.04, w.damage, 400); sfx(920+Math.random()*160,0.05,'sine',0.12); }
+}
+function reloadWeapon(){
+  const st = weaponState[currentWeapon], w = weapons[currentWeapon];
+  if(st.reloading) return; if(st.ammo >= w.mag) return; if(st.reserve <= 0) return;
+  st.reloading = true;
+  setTimeout(()=>{ const need = w.mag - st.ammo; const take = Math.min(need, st.reserve); st.reserve -= take; st.ammo += take; st.reloading=false; updateWeaponUI(); sfx(420,0.06,'sine',0.12); }, w.reload);
+}
+function fireRay(spread, damage, maxRange){
+  const origin=new THREE.Vector3(); camera.getWorldPosition(origin);
+  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+  dir.x += (Math.random()-0.5)*spread; dir.y += (Math.random()-0.5)*spread*0.5; dir.normalize();
+  const ray = new THREE.Raycaster(origin, dir, 0, maxRange);
+  let hit=null, hitDist=Infinity;
+  for(const z of zombies){
+    const box = new THREE.Box3().setFromObject(z);
+    if(ray.ray.intersectsBox(box)){
+      const pt = ray.ray.intersectBox(box, new THREE.Vector3());
+      const d = origin.distanceTo(pt);
+      if(d < hitDist){ hitDist=d; hit={z,pt}; }
+    }
+  }
+  if(hit){ const {z,pt} = hit; const fall = Math.max(0.4, 1 - hitDist/maxRange); const applied = Math.max(1, Math.round(damage*fall)); z.userData.hp -= applied; spawnParticles(pt,0x8b1b1b,10,4); if(z.userData.hp <= 0) killZombie(z); } else spawnParticles(origin.clone().add(dir.clone().multiplyScalar(maxRange*0.9)),0xffaa66,3,1.8);
+}
+function meleeAttack(range, dmg){
+  const origin=new THREE.Vector3(); camera.getWorldPosition(origin);
+  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+  for(const z of zombies.slice()){
+    const v = z.position.clone().sub(origin); const d = Math.hypot(v.x,v.z);
+    if(d < range){ const angle = dir.angleTo(v.normalize()); if(angle < Math.PI*0.6){ z.userData.hp -= dmg; spawnParticles(z.position.clone().add(new THREE.Vector3(0,0.6,0)),0x8b1b1b,10,3.4); if(z.userData.hp <= 0) killZombie(z); } }
+  }
+}
+function flameBurst(){
+  for(let i=0;i<6;i++){
+    const origin=new THREE.Vector3(); camera.getWorldPosition(origin);
+    const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); const spread = dir.clone().add(new THREE.Vector3((Math.random()-0.5)*0.32,(Math.random()-0.2)*0.12,(Math.random()-0.5)*0.32)).normalize();
+    const pos = origin.clone().add(spread.multiplyScalar(1.2 + Math.random()*2.8)); spawnParticles(pos,0xff7a2b,6,3.2);
+  }
+  for(const z of zombies.slice()){ const d = z.position.distanceTo(camera.position); if(d < 6) { z.userData.hp -= 1.2 + Math.random()*1.6; if(z.userData.hp <= 0) killZombie(z); } }
+}
+
+/* ---------- zombies (colors + AI) ---------- */
+function spawnZombie(type=null){
+  const r=Math.random(); let t=type;
+  if(!t){ if(r<0.06) t='brute'; else if(r<0.26) t='runner'; else if(r<0.42) t='spitter'; else if(r<0.58) t='crawler'; else if(r<0.66) t='bloater'; else t='walker'; }
+  const cmap={walker:0x3db84e, runner:0xcc3b3b, spitter:0x2db7a7, crawler:0x7d7d7d, bloater:0x6b3b6b, brute:0x434a54};
+  const mat = new THREE.MeshStandardMaterial({color:cmap[t]||0x3db84e,roughness:0.95});
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.9,1.05,0.5), mat); torso.castShadow=true;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.45,0.45,0.45), new THREE.MeshStandardMaterial({color:0x4a5a33})); head.position.set(0,0.9,0);
+  const g = new THREE.Group(); g.add(torso); g.add(head);
+  // spawn distance 10-28 units away, not right on player
+  const angle = Math.random()*Math.PI*2; const radius = 10 + Math.random()*22;
+  g.position.set(camera.position.x + Math.cos(angle)*radius, 0.6, camera.position.z + Math.sin(angle)*radius);
+  // assign stats per type
+  if(t==='brute') g.userData={type:'brute',hp:36 + wave*6, speed:0.22, attack:18, state:'idle', anger:0};
+  else if(t==='runner') g.userData={type:'runner',hp:6 + Math.floor(wave*0.6), speed:1.6, attack:7, state:'idle'};
+  else if(t==='spitter') g.userData={type:'spitter',hp:8 + Math.floor(wave*0.4), speed:0.42, attack:6, spitCool:Math.random()*1200};
+  else if(t==='crawler') g.userData={type:'crawler',hp:4 + Math.floor(wave*0.3), speed:0.36, attack:5, stealth:true};
+  else if(t==='bloater') g.userData={type:'bloater',hp:40 + wave*8, speed:0.18, attack:22, explode:true};
+  else g.userData={type:'walker',hp:4 + Math.floor(wave*0.4), speed:0.48, attack:6};
+  scene.add(g); zombies.push(g); addMinimapMarkerFor(g,'zombie'); return g;
+}
+function killZombie(z){
+  if(!z) return;
+  spawnParticles(z.position.clone().add(new THREE.Vector3(0,0.6,0)),0x8b1b1b,24,6.2);
+  try{ scene.remove(z); }catch(e){}
+  const idx=zombies.indexOf(z); if(idx>=0) zombies.splice(idx,1);
+  removeMinimapMarkerFor(z);
+  score += (z.userData.type==='brute'?60:14) + Math.floor(Math.random()*16); document.getElementById('score').textContent = score;
+  if(Math.random()<0.45) spawnPickup(z.position.clone(), Math.random()<0.5?'ammo':'loot');
+  if(z.userData.type==='bloater'){ spawnExplosion(z.position,36); }
+  killsThisWave++; checkWaveClear();
+}
+function spawnExplosion(pos,damage){ spawnParticles(pos,0xff7a2b,56,7.0); sfx(90,0.6,'sawtooth',0.16); for(const z of zombies.slice()){ const d=z.position.distanceTo(pos); if(d < 6.2){ z.userData.hp -= Math.max(6, Math.round(damage*(1 - d/6.2))); if(z.userData.hp <= 0) killZombie(z); } } }
+
+/* ---------- waves ---------- */
+function startWave(){
+  wave++; document.getElementById('wave').textContent = wave;
+  // unlock weapons progressively
+  for(const k in weapons){ if(weapons[k].unlockWave <= wave) { /* unlocked automatically */ } }
+  const cnt = Math.min(MAX_ZOMBIES, 6 + Math.floor(wave*2.4));
+  zombiesThisWave = cnt; killsThisWave=0; document.getElementById('score').textContent = score; document.getElementById('wave').textContent = wave; document.getElementById('hp').textContent = playerHP;
+  for(let i=0;i<cnt;i++) setTimeout(()=> spawnZombie(), i*160 + Math.random()*240);
+}
+function checkWaveClear(){ const left = Math.max(0, zombiesThisWave - killsThisWave); document.getElementById('wave').textContent = wave; document.getElementById('hp').textContent = playerHP; if(left === 0 && gameStarted){ showToast('Wave cleared'); setTimeout(()=> startWave(), 1800); autoSave(); } }
+
+/* ---------- AI + update ---------- */
+function computeSeparation(z){
+  const sep=new THREE.Vector3(); let count=0;
+  for(const o of zombies){ if(o===z) continue; const d=z.position.distanceTo(o.position); if(d<2.2){ const diff=z.position.clone().sub(o.position).normalize().divideScalar(d); sep.add(diff); count++; } }
+  if(count>0) sep.divideScalar(count);
+  return sep;
+}
+function playerHit(dmg, infectAdd=0){
+  let mitigated = dmg;
+  if(inventory.armor>0){ mitigated = dmg*0.6; inventory.armor = Math.max(0, inventory.armor - 0.04); } // degrade armor slowly
+  playerHP -= mitigated; document.getElementById('hp').textContent = Math.max(0, Math.floor(playerHP));
+  if(infectAdd) infection = Math.min(100, infection + infectAdd), document.getElementById('inf').textContent = Math.floor(infection) + '%';
+  sfx(160,0.12,'sawtooth',0.12);
+  // hit vignette
+  const v=document.createElement('div'); v.style.position='fixed'; v.style.inset='0'; v.style.zIndex='995'; v.style.pointerEvents='none'; v.style.background='radial-gradient(circle at 50% 20%, rgba(160,0,0,0.12), rgba(0,0,0,0))'; document.body.appendChild(v); setTimeout(()=> v.remove(),160);
+  if(playerHP <= 0 || infection >= 100) gameOver();
+}
+
+/* ---------- controls / flashlight ---------- */
+function initControls(){
+  window.addEventListener('keydown', (e)=>{
+    if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    const k=e.key.toLowerCase();
+    if(k==='w') keys.w=1; if(k==='s') keys.s=1; if(k==='a') keys.a=1; if(k==='d') keys.d=1; if(e.key==='Shift') keys.shift=1;
+    if(k==='e') tryPickup();
+    if(k==='r') reloadWeapon();
+    if(k>='1' && k<='6'){ const idx=parseInt(k); const names=['pistol','smg','shotgun','rifle','sniper','flamethrower']; const name=names[idx-1]; if(weapons[name] && wave >= weapons[name].unlockWave) { currentWeapon = name; updateWeaponUI(); } }
+    if(k==='f') toggleFlash();
+    if(k==='m') toggleMinimap();
+    if(k==='escape') togglePause();
+    if(k==='g'){ if(inventory.grenades>0){ inventory.grenades--; const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); const pt=origin.add(dir.multiplyScalar(6)); spawnExplosion(pt,28); showToast('Threw grenade'); } else showToast('No grenades'); }
+  });
+  window.addEventListener('keyup', (e)=>{ const k=e.key.toLowerCase(); if(k==='w') keys.w=0; if(k==='s') keys.s=0; if(k==='a') keys.a=0; if(k==='d') keys.d=0; if(e.key==='Shift') keys.shift=0; });
+  window.addEventListener('mousemove', (e)=>{ if(!controlsEnabled) return; const mvX=e.movementX||0, mvY=e.movementY||0; camera.rotation.order='YXZ'; camera.rotation.y -= mvX * 0.0026; camera.rotation.x -= mvY * 0.0026; camera.rotation.x = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, camera.rotation.x)); });
+  window.addEventListener('mousedown', (e)=>{ if(!gameStarted || paused) return; if(e.button===0){ attemptShoot(); mouseHeld=true; }});
+  window.addEventListener('mouseup', ()=>{ mouseHeld=false; flameActive=false; });
+  document.addEventListener('pointerlockchange', ()=>{ controlsEnabled = (document.pointerLockElement === canvas); });
+  canvas.addEventListener('click', ()=>{ try{ canvas.requestPointerLock(); }catch(e){} });
+}
+let mouseHeld=false, flameActive=false;
+function ensureFlashlight(){
+  if(!flashlight){ flashlight = new THREE.SpotLight(0xffffff, 0.0, 36, Math.PI*0.14, 0.6, 1); flashlight.castShadow=true; flashlight.shadow.mapSize.width=1024; flashlight.shadow.mapSize.height=1024; scene.add(flashlight); flashlight.target = new THREE.Object3D(); scene.add(flashlight.target); }
+}
+function toggleFlash(){ ensureFlashlight(); if(battery <= 0 && !flashlightOn){ showToast('Battery dead'); return; } flashlightOn = !flashlightOn; flashlight.visible = flashlightOn; showToast('Flashlight ' + (flashlightOn?'ON':'OFF')); }
+
+/* ---------- minimap (simple) ---------- */
+let miniRenderer=null, miniScene=null, miniCam=null, miniMarkers=new Map();
+function initMinimap(){
+  minimapContainer.style.display='flex';
+  const c=minimapCanvas; c.width=200; c.height=200;
+  miniRenderer = new THREE.WebGLRenderer({canvas: c, alpha:true}); miniRenderer.setSize(c.width,c.height); miniRenderer.setPixelRatio(1);
+  miniScene = new THREE.Scene();
+  miniCam = new THREE.OrthographicCamera(-120,120,120,-120,0.1,2000); miniCam.up.set(0,0,-1);
+  const grid=new THREE.GridHelper(2000,40,0x222,0x111); grid.rotation.x=Math.PI/2; grid.material.opacity=0.18; grid.material.transparent=true; miniScene.add(grid);
+}
+function addMinimapMarkerFor(obj,type='zombie'){ if(!obj || !obj.uuid) return; const color = (type==='zombie'?0xff3b3b:(type==='loot'?0xffd46b:(type==='survivor'?0x7affc2:0x5af))); const sp = new THREE.Sprite(new THREE.SpriteMaterial({color:color})); sp.scale.set(6,6,1); sp.userData={world:obj,type}; miniScene.add(sp); miniMarkers.set(obj.uuid,sp); }
+function removeMinimapMarkerFor(obj){ if(!obj) return; const m=miniMarkers.get(obj.uuid); if(m){ try{ miniScene.remove(m);}catch(e){} miniMarkers.delete(obj.uuid);} }
+function updateMinimap(){ if(!miniRenderer || !camera) return; miniCam.position.set(camera.position.x,200,camera.position.z); miniCam.updateProjectionMatrix(); for(const [id, sp] of miniMarkers){ const w = sp.userData.world; if(!w) continue; const pos = w.position || w.userData.pos; if(!pos) continue; sp.position.set(pos.x,1,pos.z); } miniRenderer.render(miniScene, miniCam); }
+
+/* ---------- UI helpers ---------- */
+function showToast(txt){ const d=document.createElement('div'); d.className='save-toast'; d.textContent=txt; document.body.appendChild(d); setTimeout(()=> d.style.opacity='0',900); setTimeout(()=> d.remove(),1500); }
+function updateHUD(){ document.getElementById('hp').textContent=Math.max(0, Math.floor(playerHP)); document.getElementById('bat').textContent=Math.max(0, Math.floor(battery)) + '%'; document.getElementById('inf').textContent=Math.floor(infection) + '%'; document.getElementById('score').textContent = score; updateWeaponUI(); }
+
+/* ---------- pickup UI detection ---------- */
+function updatePrompts(){
+  let nearPickup=false;
+  for(const p of pickups){ if(p.position.distanceTo(camera.position) < 2.2) { nearPickup=true; break; } }
+  document.getElementById('pickupPrompt').style.display = nearPickup ? 'block' : 'none';
+  let nearSurv=false;
+  for(const s of survivors){ if(s.position.distanceTo(camera.position) < 2.2){ nearSurv=true; break; } }
+  document.getElementById('interactPrompt').style.display = nearSurv ? 'block' : 'none';
+}
+
+/* ---------- save/load ---------- */
+function autoSave(){ try{ const payload={highest:Math.max(wave,parseInt(localStorage.getItem('z13_highest')||'0')), lastWave:wave, unlocked:[]}; localStorage.setItem('z13_highest', payload.highest); showToast('Saved (highest wave ' + payload.highest + ')'); }catch(e){} }
+function loadSave(){ try{ const hv = parseInt(localStorage.getItem('z13_highest')||'0'); if(hv>0){ showToast('Highest wave: '+hv); return true; } return false;}catch(e){ return false; } }
+
+/* ---------- game over ---------- */
+function gameOver(){ running=false; gameStarted=false; showToast('You Died — Restart from main menu'); document.getElementById('hp').textContent = 0; /* show simple overlay */ document.getElementById('pauseOverlay').style.display='flex'; document.getElementById('pauseOverlay').querySelector('h2').textContent='You Died'; }
+
+/* ---------- main loop ---------- */
+function loop(){
+  if(!running) return;
+  const t = performance.now(); const dt = Math.min(0.06, (t - lastFrame)/1000); lastFrame = t;
+  if(!paused){
+    // movement
+    const speed = keys.shift ? 5.6 : 3.2;
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); forward.y=0; forward.normalize();
+    const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); right.y=0; right.normalize();
+    const mv = new THREE.Vector3();
+    if(keys.w) mv.add(forward); if(keys.s) mv.sub(forward); if(keys.a) mv.sub(right); if(keys.d) mv.add(right);
+    if(mv.lengthSq()>0){ mv.normalize().multiplyScalar(speed*dt); camera.position.add(mv); }
+    // flashlight usage
+    if(flashlight){
+      const pos=new THREE.Vector3(); camera.getWorldPosition(pos);
+      const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+      flashlight.position.copy(pos.clone().add(dir.clone().multiplyScalar(0.16)));
+      flashlight.target.position.copy(pos.clone().add(dir.clone().multiplyScalar(8)));
+      flashlight.target.updateMatrixWorld();
+      if(flashlightOn){ battery = Math.max(0, battery - dt*1.8); flashlight.intensity = battery > 0 ? 2.4 * Math.max(0.14, battery/100) : 0; flashlight.visible = battery > 0; } else { flashlight.visible=false; }
+    }
+    if(mouseHeld && weapons[currentWeapon] && weapons[currentWeapon].auto) attemptShoot();
+    if(flameActive && currentWeapon==='flamethrower') flameBurst();
+
+    // ambient spawn
+    if(performance.now() - lastSpawnTime > 1400){
+      lastSpawnTime = performance.now();
+      const num = 1 + Math.floor(Math.random()*Math.min(3,1+Math.floor(wave/3)));
+      for(let i=0;i<num;i++) spawnZombie();
+    }
+
+    // zombie AI
+    for(const z of zombies.slice()){
+      const ud=z.userData; const toPlayer = new THREE.Vector3().subVectors(camera.position, z.position); const dist = Math.hypot(toPlayer.x,toPlayer.z);
+      const sep = computeSeparation(z).multiplyScalar(0.6);
+      const dir = camera.position.clone().setY(z.position.y).sub(z.position).normalize().add(sep).normalize();
+      const spd = (ud.speed || 0.45)*(1 + wave*0.02);
+      z.position.x += dir.x * spd * dt; z.position.z += dir.z * spd * dt;
+      z.lookAt(new THREE.Vector3(camera.position.x, z.position.y, camera.position.z));
+      if(dist < 1.3 && (!ud._hit || performance.now() - ud._hit > 900)){ ud._hit = performance.now(); playerHit(ud.attack || 6, ud.type==='crawler'?0:4); }
+      // spitter attack
+      if(ud.type==='spitter'){ ud.spitCool = (ud.spitCool || 0) - dt*1000; if(ud.spitCool <= 0 && dist < 18){ ud.spitCool = 1400 + Math.random()*1200; spitAcid(z.position.clone(), camera.position.clone()); } }
+    }
+
+    // update particles
+    updateParticles(dt);
+    updatePrompts();
+    updateMinimap();
+    updateHUD();
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------- projectile spit ---------- */
+function spitAcid(from,target){
+  const dir = target.clone().sub(from).normalize(); const proj = {pos: from.clone().add(new THREE.Vector3(0,1,0)), vel: dir.clone().multiplyScalar(5.6), life:0, max:2.4};
+  const id = setInterval(()=>{ proj.pos.add(proj.vel.clone().multiplyScalar(0.06)); spawnParticles(proj.pos,0x33bb66,2,1.2); if(proj.pos.distanceTo(camera.position) < 1.1){ playerHit(8); clearInterval(id); } proj.life += 0.06; if(proj.life > proj.max) clearInterval(id); }, 60);
+}
+
+/* ---------- helper: update weapon unlocks visually ---------- */
+function listUnlocks(){
+  // method to show unlocked weapons - omitted small UI to keep file compact
+}
+
+/* ---------- minimap helpers (add/remove) ---------- */
+function addMinimapMarkerFor(obj,type='zombie'){ if(!miniScene) return; const color=(type==='zombie'?0xff3b3b:(type==='loot'?0xffd46b:(type==='survivor'?0x7affc2:0x5af))); const sp = new THREE.Sprite(new THREE.SpriteMaterial({color:color})); sp.scale.set(6,6,1); sp.userData={world:obj,type}; miniScene.add(sp); miniMarkers.set(obj.uuid,sp); }
+function removeMinimapMarkerFor(obj){ const m=miniMarkers.get(obj.uuid); if(m){ try{ miniScene.remove(m);}catch(e){} miniMarkers.delete(obj.uuid);} }
+
+/* ---------- UI button wiring ---------- */
+document.getElementById('btnPlay').addEventListener('click', ()=>{ // stop menu cinematic and init game
+  stopMenu();
+  initGameScene();
+  ensureAudio();
+});
+document.getElementById('btnQuick').addEventListener('click', ()=>{ stopMenu(); initGameScene(); startWave(); });
+document.getElementById('btnHow').addEventListener('click', ()=>{ document.getElementById('how').style.display='flex'; menuOverlay.style.display='none'; });
+document.getElementById('howBack').addEventListener('click', ()=>{ document.getElementById('how').style.display='none'; menuOverlay.style.display='flex'; });
+document.getElementById('btnSettings').addEventListener('click', ()=>{ document.getElementById('settingsPanel').style.display='flex'; menuOverlay.style.display='none'; });
+document.getElementById('settingsBackBtn').addEventListener('click', ()=>{ document.getElementById('settingsPanel').style.display='none'; menuOverlay.style.display='flex'; });
+document.getElementById('btnCredits').addEventListener('click', ()=>{ document.getElementById('creditsBox').style.display='flex'; menuOverlay.style.display='none'; });
+document.getElementById('creditsBackBtn').addEventListener('click', ()=>{ document.getElementById('creditsBox').style.display='none'; menuOverlay.style.display='flex'; });
+document.getElementById('btnLoad').addEventListener('click', ()=>{ if(loadSave()) showToast('Loaded'); else showToast('No save'); });
+
+document.getElementById('resumeBtn').addEventListener('click', ()=>{ togglePause(false); });
+document.getElementById('saveBtn').addEventListener('click', ()=>{ autoSave(); });
+document.getElementById('mainMenuBtn').addEventListener('click', ()=>{ location.reload(); });
+
+/* ---------- simple start ---------- */
+initMenuCinematic();
+
+/* ---------- window resize ---------- */
+window.addEventListener('resize', ()=>{
+  if(menuRenderer){ menuRenderer.setSize(window.innerWidth, window.innerHeight); menuCam.aspect = window.innerWidth / window.innerHeight; menuCam.updateProjectionMatrix(); }
+  if(renderer){ renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); }
+});
+
+/* ---------- utility small functions ---------- */
+function showToastImmediate(msg){ showToast(msg); }
+
+/* ---------- done ---------- */
+
+</script>
+</body>
+</html>
