@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Z-13: The Quarantine</title>
+<style>
+  html,body { margin:0; overflow:hidden; background:#000; color:#0f0; font-family:monospace; }
+  #ui {
+    position:fixed; top:10px; left:10px; z-index:10; color:#0f0;
+  }
+  #minimap {
+    position:fixed; right:10px; bottom:10px; width:200px; height:200px;
+    border:2px solid rgba(0,255,0,0.6); border-radius:10px;
+    background:rgba(0,0,0,0.4); box-shadow:0 0 10px #0f0; z-index:9;
+  }
+  #pauseMenu {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85);
+    color:#0f0; z-index:20; text-align:center; padding-top:200px;
+  }
+  button {
+    background:#0f0; color:#000; border:none; padding:10px 20px; font-weight:bold;
+    margin:10px; cursor:pointer; border-radius:8px;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div>Wave: <span id="waveNum">1</span></div>
+  <div>Health: <span id="healthNum">100</span></div>
+</div>
+
+<canvas id="minimap"></canvas>
+
+<div id="pauseMenu">
+  <h1>Paused</h1>
+  <button id="resumeBtn">Resume</button>
+  <button id="restartBtn">Restart</button>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+let scene, camera, renderer;
+let player = new THREE.Object3D();
+let zombies = [];
+let bullets = [];
+let clock = new THREE.Clock();
+let paused = false;
+let health = 100;
+let wave = 1;
+let kills = 0;
+let requiredKills = 10;
+let miniCam, miniRenderer;
+let keys = {};
+
+init();
+animate();
+
+function init() {
+  // Scene setup
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+  // Camera
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 2, 5);
+  player.add(camera);
+  scene.add(player);
+
+  // Lighting
+  const ambient = new THREE.AmbientLight(0x404040);
+  scene.add(ambient);
+  const dir = new THREE.DirectionalLight(0xffffff, 1);
+  dir.position.set(5,10,7);
+  scene.add(dir);
+
+  // Ground
+  const groundGeo = new THREE.PlaneGeometry(200,200);
+  const groundMat = new THREE.MeshLambertMaterial({color:0x222222});
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  scene.add(ground);
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Mini-map camera + renderer
+  miniCam = new THREE.OrthographicCamera(-50, 50, 50, -50, 0.1, 500);
+  miniCam.rotation.x = -Math.PI/2;
+  miniCam.position.y = 100;
+  miniRenderer = new THREE.WebGLRenderer({alpha:true});
+  miniRenderer.setSize(200,200);
+  document.getElementById("minimap").replaceWith(miniRenderer.domElement);
+
+  // Events
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  document.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; });
+  document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+  document.addEventListener("click", shoot);
+  document.addEventListener("keydown", e => {
+    if(e.key === "Escape") togglePause();
+  });
+
+  document.getElementById("resumeBtn").onclick = () => togglePause();
+  document.getElementById("restartBtn").onclick = () => window.location.reload();
+
+  spawnWave();
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById("pauseMenu").style.display = paused ? "block" : "none";
+}
+
+function spawnWave() {
+  for(let i=0;i<requiredKills;i++){
+    const zombieGeo = new THREE.BoxGeometry(1,2,1);
+    const zombieMat = new THREE.MeshLambertMaterial({color:0x006600});
+    const z = new THREE.Mesh(zombieGeo, zombieMat);
+    z.position.set((Math.random()-0.5)*60,1,(Math.random()-0.5)*60);
+    scene.add(z);
+    zombies.push(z);
+  }
+}
+
+function shoot() {
+  if(paused) return;
+  const bulletGeo = new THREE.SphereGeometry(0.1,8,8);
+  const bulletMat = new THREE.MeshBasicMaterial({color:0xffff00});
+  const b = new THREE.Mesh(bulletGeo, bulletMat);
+  b.position.copy(player.position);
+  b.direction = new THREE.Vector3();
+  player.getWorldDirection(b.direction);
+  bullets.push(b);
+  scene.add(b);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if(paused) return;
+
+  const dt = clock.getDelta();
+
+  // Movement
+  const speed = 10*dt;
+  if(keys["w"]) player.translateZ(-speed);
+  if(keys["s"]) player.translateZ(speed);
+  if(keys["a"]) player.translateX(-speed);
+  if(keys["d"]) player.translateX(speed);
+
+  // Update bullets
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.position.addScaledVector(b.direction, 100*dt);
+    // Collision
+    for(let j=zombies.length-1;j>=0;j--){
+      if(b.position.distanceTo(zombies[j].position)<1){
+        scene.remove(zombies[j]);
+        zombies.splice(j,1);
+        scene.remove(b);
+        bullets.splice(i,1);
+        kills++;
+        if(kills>=requiredKills){ nextWave(); }
+        break;
+      }
+    }
+  }
+
+  // Zombies move toward player
+  zombies.forEach(z => {
+    const dir = player.position.clone().sub(z.position).normalize();
+    z.position.addScaledVector(dir, 1.5*dt);
+    if(z.position.distanceTo(player.position)<1.2){
+      health -= 10*dt;
+      if(health<=0) {
+        alert("You Died! Refresh to restart.");
+        health = 100; kills = 0; wave = 1;
+      }
+    }
+  });
+
+  document.getElementById("healthNum").textContent = health.toFixed(0);
+
+  // Mini-map
+  miniCam.position.x = player.position.x;
+  miniCam.position.z = player.position.z;
+  miniRenderer.render(scene, miniCam);
+
+  renderer.render(scene, camera);
+}
+
+function nextWave(){
+  wave++;
+  document.getElementById("waveNum").textContent = wave;
+  kills = 0;
+  requiredKills += 5;
+  spawnWave();
+}
+</script>
+</body>
+</html>
