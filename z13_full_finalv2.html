@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Z-13: The Quarantine — Cinematic Menu Build</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+:root{
+  --accent:#c73b3b; --muted:#b9bcc0; --bg:#040508; --glass: rgba(8,8,10,0.66);
+  --ui-radius:12px;
+}
+html,body{height:100%;margin:0;background:linear-gradient(180deg,#020306,#07060a);font-family:Inter,system-ui,Segoe UI,Helvetica,Arial;color:#fff;overflow:hidden}
+canvas{display:block;width:100%;height:100vh}
+.center-full{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:999}
+.menu-card{width:min(1100px,94%);background:linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0.45));border-radius:16px;padding:18px;box-shadow:0 18px 60px rgba(0,0,0,0.6);backdrop-filter: blur(6px);display:flex;gap:18px}
+.brand{display:flex;align-items:center;gap:14px}
+.brand h1{margin:0;font-size:36px;letter-spacing:1px}
+.menu-controls{margin-left:auto;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.btn{background:var(--accent);border:none;color:#fff;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:700}
+.btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+.small{font-size:13px;color:var(--muted)}
+.side-panel{width:320px;min-width:240px}
+.menu-main{flex:1}
+.hint{color:var(--muted);margin-top:8px}
+#hud{position:fixed;left:12px;top:12px;z-index:950;background:var(--glass);color:#fff;padding:12px;border-radius:12px;min-width:360px;display:none}
+#weaponUI{position:fixed;right:12px;bottom:12px;z-index:950;background:var(--glass);color:#fff;padding:12px;border-radius:12px;min-width:260px;display:none}
+#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:945;color:#fff;display:none;font-size:22px}
+#pickupPrompt,#interactPrompt{position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:944;background:rgba(0,0,0,0.66);color:#fff;padding:8px 12px;border-radius:10px;display:none}
+#missionBox{position:fixed;right:12px;top:12px;z-index:950;background:var(--glass);padding:10px;border-radius:10px;color:#fff;min-width:260px;display:none}
+#dialogBox{position:fixed;left:50%;bottom:6%;transform:translateX(-50%);z-index:960;background:rgba(0,0,0,0.8);padding:12px;border-radius:10px;color:#fff;display:none;min-width:560px}
+#pauseOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:980}
+.pause-card{background:rgba(0,0,0,0.82);padding:18px;border-radius:16px;color:#fff;text-align:center;width:520px}
+.info-card{ width:840px; max-width:94%; padding:18px; border-radius:12px; background:linear-gradient(180deg, rgba(14,14,16,0.9), rgba(6,6,8,0.82)); text-align:left; max-height:86vh; overflow:auto; color:#fff;}
+.save-toast{position:fixed;right:12px;bottom:12px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.6);color:#fff;z-index:995}
+#minimapContainer { position: fixed; right: 18px; bottom: 18px; width: 220px; height: 220px; border-radius: 10px; overflow: hidden; background: rgba(2,2,2,0.45); border: 2px solid rgba(0,200,140,0.08); box-shadow: 0 6px 14px rgba(0,0,0,0.6); z-index: 1200; display:none; }
+#minimapCanvas{width:100%;height:100%;display:block}
+#minimapLarge { position: fixed; right: 18px; bottom: 18px; width: 420px; height: 420px; z-index:1201; border-radius:12px; border:2px solid rgba(255,255,255,0.03); display:none; background: rgba(0,0,0,0.55); }
+.settings-row{display:flex;justify-content:space-between;align-items:center;margin:6px 0}
+small.note{color:var(--muted)}
+/* menu overlay container (centers menu content over cinematic canvas) */
+#menuOverlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:998;pointer-events:none}
+.menu-inner{pointer-events:auto}
+</style>
+</head>
+<body>
+
+<!-- Cinematic menu will render on the same canvas as the game; overlay the menu card above it -->
+<canvas id="viewportCanvas"></canvas>
+
+<!-- Menu overlay (centers above cinematic) -->
+<div id="menuOverlay" style="display:none">
+  <div class="menu-inner">
+    <div id="menu" class="menu-card">
+      <div class="menu-main">
+        <div class="brand" style="justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <svg width="72" height="72" viewBox="0 0 24 24" fill="none"><rect rx="4" width="24" height="24" fill="#0b0b0d"/><path d="M6 9h12v6H6z" fill="#c73b3b"/></svg>
+              <div>
+                <h1 style="margin:0">Z-13: The Quarantine</h1>
+                <div class="small">Survival horror — Prototype</div>
+              </div>
+            </div>
+            <div style="margin-top:12px;color:var(--muted)">Campaign: Prologue → Outskirts → Factory → Facility</div>
+          </div>
+          <div class="menu-controls">
+            <button id="startBtn" class="btn">Play</button>
+            <button id="howBtn" class="btn ghost">How to Play</button>
+            <button id="settingsBtn" class="btn ghost">Settings</button>
+            <button id="creditsBtn" class="btn ghost">Credits</button>
+          </div>
+        </div>
+
+        <div style="margin-top:14px" class="hint">
+          <div class="small">Tip: F flashlight • E pick-up • T talk • 1–6 weapons • M toggle map • Esc pause</div>
+        </div>
+      </div>
+
+      <div class="side-panel">
+        <div style="background:linear-gradient(180deg,#07080a,#0d0c0f);padding:12px;border-radius:12px">
+          <div style="font-weight:800">Latest Patch</div>
+          <div class="small" style="margin-top:8px">• Cinematic menu • Minimap • Interiors • Pause menu • Save/Load</div>
+          <div style="height:12px"></div>
+          <button id="loadBtn" class="btn ghost" style="width:100%">Load Last Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- How to play / Settings / Credits (hidden overlays) -->
+<div id="howto" class="center-full" style="display:none"><div class="info-card">
+  <h2>How to Play</h2>
+  <p>WASD to move. Mouse to look. Left click to shoot. R reload. 1–6 switch weapons. F toggle flashlight (battery drains). E to pick up / open. T to interact with survivors/traders. V melee, G grenade, M toggle big map, Esc to pause.</p>
+  <p>Infection increases when bitten — use antivirals to lower it. Complete objectives to progress chapters. Save/load available in menu.</p>
+  <div style="text-align:right"><button id="howBack" class="btn">Back</button></div>
+</div></div>
+
+<div id="settings" class="center-full" style="display:none"><div class="info-card">
+  <h2>Settings</h2>
+  <div class="settings-row"><div>Sound</div><div><input id="soundToggle" type="checkbox" checked /></div></div>
+  <div class="settings-row"><div>Shadows</div><div><select id="shadowSelect"><option value="on">On</option><option value="off">Off</option></select></div></div>
+  <div class="settings-row"><div>Particle Quality</div><div><select id="particleSelect"><option value="full">Full</option><option value="medium">Medium</option><option value="low">Low</option></select></div></div>
+  <div style="text-align:right"><button id="settingsBack" class="btn">Back</button></div>
+</div></div>
+
+<div id="credits" class="center-full" style="display:none"><div class="info-card">
+  <h2>Credits</h2>
+  <p>Z-13: The Quarantine — Prototype built for you by ChatGPT</p>
+  <div style="text-align:right"><button id="creditsBack" class="btn">Back</button></div>
+</div></div>
+
+<!-- Game UI (hidden until play press) -->
+<div id="hud" style="display:none">
+  <div style="display:flex;justify-content:space-between;gap:10px">
+    <div>HP <strong id="healthVal">100</strong></div>
+    <div>Score <strong id="scoreVal">0</strong></div>
+    <div>Wave <strong id="waveVal">0</strong></div>
+    <div>Z Left <strong id="zLeft">0</strong></div>
+  </div>
+  <div style="margin-top:8px;display:flex;gap:10px;align-items:center">
+    <div class="small-ind">Battery: <span id="batteryVal">100%</span></div>
+    <div class="small-ind">Infection: <span id="infectVal">0%</span></div>
+    <div class="small-ind">Flash: <span id="flashVal">OFF</span></div>
+  </div>
+</div>
+
+<div id="weaponUI" style="display:none">
+  <div id="weaponName">Pistol</div>
+  <div style="font-size:13px;margin-top:6px">Ammo: <span id="ammoVal">12</span>/<span id="reserveVal">48</span></div>
+  <div id="invList" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+</div>
+
+<div id="crosshair" style="display:none">+</div>
+<div id="pickupPrompt">[E] Pick up / Open</div>
+<div id="interactPrompt">[T] Interact</div>
+<div id="missionBox" style="display:none"></div>
+<div id="dialogBox"></div>
+
+<div id="pauseOverlay"><div class="pause-card">
+  <h2>Paused</h2>
+  <div style="margin-top:10px">
+    <button id="resumeBtn" class="btn">Resume</button>
+    <button id="pauseSettings" class="btn ghost">Settings</button>
+    <button id="saveBtn" class="btn">Save</button>
+    <button id="pauseMenuMain" class="btn ghost">Main Menu</button>
+  </div>
+</div></div>
+
+<div id="tradeBox" style="display:none;position:fixed;left:50%;top:60%;transform:translate(-50%,-50%);z-index:995;background:rgba(0,0,0,0.9);color:#fff;padding:12px;border-radius:12px;width:360px;text-align:center">
+  <div id="tradeText">Trader</div>
+  <div style="margin-top:10px">
+    <button id="buyAmmoBtn" class="btn">Buy Ammo (50)</button>
+    <button id="buyMedBtn" class="btn">Buy Medkit (80)</button>
+    <button id="closeTrade" class="btn ghost">Close</button>
+  </div>
+</div>
+
+<div id="gameOver" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;z-index:999;background:rgba(0,0,0,0.9)">
+  <div style="background:rgba(0,0,0,0.8);padding:22px;border-radius:12px;text-align:center;color:#fff;margin:auto;width:420px">
+    <h1 id="gameOverTitle">You Died</h1>
+    <div id="finalScore">Score: 0</div>
+    <div style="margin-top:12px">
+      <button id="retryBtn" class="btn">Retry Chapter</button>
+      <button id="menuBtnEnd" class="btn ghost">Main Menu</button>
+    </div>
+  </div>
+</div>
+
+<div id="minimapContainer"><div id="minimapLegend"></div><canvas id="minimapCanvas"></canvas></div>
+<canvas id="minimapLarge" style="display:none"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script>
+/*
+  Z-13 Cinematic Menu Build
+  - main menu uses a "menuScene" with an orbit camera over a silent dark skyline
+  - flickering windows / ambient lights create cinematic effect
+  - when Play is pressed, the main game scene initialises and menuScene stops
+  - everything else (game engine, minimap, pause) same as previous prototype
+*/
+
+/* -----------------------
+   UI refs
+   ----------------------- */
+const viewportCanvas = document.getElementById('viewportCanvas');
+const menuOverlay = document.getElementById('menuOverlay');
+const menu = document.getElementById('menu'), startBtn = document.getElementById('startBtn'), howBtn = document.getElementById('howBtn'), settingsBtn = document.getElementById('settingsBtn'), creditsBtn = document.getElementById('creditsBtn');
+const howto = document.getElementById('howto'), howBack = document.getElementById('howBack');
+const settingsPanel = document.getElementById('settings'), settingsBack = document.getElementById('settingsBack');
+const credits = document.getElementById('credits'), creditsBack = document.getElementById('creditsBack');
+const loadBtn = document.getElementById('loadBtn');
+const pauseOverlay = document.getElementById('pauseOverlay'), resumeBtn = document.getElementById('resumeBtn'), saveBtn = document.getElementById('saveBtn'), pauseMenuMain = document.getElementById('pauseMenuMain'), pauseSettings = document.getElementById('pauseSettings');
+const hud = document.getElementById('hud'), weaponUI = document.getElementById('weaponUI');
+const minimapContainer = document.getElementById('minimapContainer'), minimapCanvas = document.getElementById('minimapCanvas'), minimapLarge = document.getElementById('minimapLarge');
+const healthVal = document.getElementById('healthVal'), scoreVal = document.getElementById('scoreVal'), waveVal = document.getElementById('waveVal'), zLeft = document.getElementById('zLeft');
+const batteryVal = document.getElementById('batteryVal'), infectVal = document.getElementById('infectVal'), flashVal = document.getElementById('flashVal');
+const pickupPrompt = document.getElementById('pickupPrompt'), interactPrompt = document.getElementById('interactPrompt');
+
+/* -----------------------
+   global state
+   ----------------------- */
+let menuScene, menuCamera, menuRenderer, menuAnimationId;
+let scene, camera, renderer, clock;
+let running=false, paused=false, gameStarted=false;
+let playerHealth=100, score=0, battery=100, infection=0;
+let wave=0, zombiesThisWave=0, killsThisWave=0;
+let zombies=[], pickups=[], props=[], lorePages=[], survivors=[];
+let particlePools=[];
+let mini = { renderer:null, scene:null, camera:null, markers:new Map(), playerMarker:null, settings:{size:220,zoom:1.0,large:false}, colors:{zombie:0xff5a5a,loot:0xffd46b,survivor:0xffffff,objective:0x5aa7ff} };
+let weaponState = {}, currentWeapon='pistol';
+let settings = {sound:true, shadows:true, particles:'full', maxZombies:80};
+let audioCtx=null;
+let flashlight=null, flashlightOn=false;
+
+/* -----------------------
+   weapons (same as earlier)
+   ----------------------- */
+const weapons = {
+  pistol:{name:'Pistol',mag:12,reserve:72,rate:260,damage:7,auto:false,reload:900},
+  shotgun:{name:'Shotgun',mag:6,reserve:36,rate:800,damage:12,pellets:8,auto:false,reload:1500},
+  smg:{name:'SMG',mag:40,reserve:160,rate:70,damage:2,auto:true,reload:1200},
+  sniper:{name:'Sniper',mag:5,reserve:20,rate:900,damage:48,auto:false,reload:2000},
+  flamethrower:{name:'Flamethrower',mag:100,reserve:300,rate:60,damage:0.8,area:true,auto:true,reload:4000},
+  bat:{name:'Bat',mag:1,reserve:0,rate:400,damage:14,melee:true,auto:false}
+};
+for(const k in weapons) weaponState[k] = {ammo:weapons[k].mag, reserve:weapons[k].reserve, reloading:false, lastShot:0};
+
+/* -----------------------
+   audio helper
+   ----------------------- */
+function ensureAudio(){ if(!audioCtx && settings.sound){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx=null; } } }
+function sfx(freq=440,dur=0.06,type='sine',vol=0.12){ if(!audioCtx) return; const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type=type; o.frequency.value=freq; o.connect(g); g.connect(audioCtx.destination); g.gain.value=0.0001; g.gain.linearRampToValueAtTime(vol,audioCtx.currentTime+0.01); o.start(); o.stop(audioCtx.currentTime+dur); g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+dur); }
+
+/* -----------------------
+   menu scene: cinematic city skyline
+   - silent dark skyline with flickering windows
+   ----------------------- */
+function initMenuScene(){
+  // renderer uses the same canvas; menuScene draws first while menu visible
+  menuRenderer = new THREE.WebGLRenderer({canvas: viewportCanvas, antialias:true});
+  menuRenderer.setSize(innerWidth, innerHeight);
+  menuRenderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+  menuScene = new THREE.Scene();
+  menuScene.background = new THREE.Color(0x030305);
+
+  // camera orbiting
+  menuCamera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 2000);
+  menuCamera.position.set(0, 40, 120);
+  menuCamera.lookAt(0,8,0);
+
+  // faint ambient
+  const amb = new THREE.AmbientLight(0x11121a, 0.8);
+  menuScene.add(amb);
+
+  // some directional moon-like light
+  const moon = new THREE.DirectionalLight(0x6fa2ff, 0.35);
+  moon.position.set(-80,120,40);
+  menuScene.add(moon);
+
+  // procedural skyline: many box buildings with random window emission map (flicker via material emissive intensity)
+  const city = new THREE.Group();
+  const gridSize = 12;
+  const spacing = 14;
+  for(let x=-gridSize;x<=gridSize;x++){
+    for(let z=-gridSize;z<=gridSize;z++){
+      const w = 8 + Math.floor(Math.random()*18);
+      const h = 10 + Math.floor(Math.random()*60);
+      const d = 8 + Math.floor(Math.random()*18);
+      const mat = new THREE.MeshStandardMaterial({color:0x0b0c0f, roughness:0.9, metalness:0.05});
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+      b.position.set(x*spacing + (Math.random()-0.5)*4, h/2 - 2 + Math.random()*4, z*spacing + (Math.random()-0.5)*4);
+      // window lights simulated with emissive map points: create small emissive sprites on building faces
+      const lights = [];
+      const cols = Math.floor(w/2);
+      const rows = Math.floor(h/3);
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          if(Math.random() < 0.12){ // some windows lit
+            const sx = (c - cols/2) * 0.5 + (Math.random()-0.5)*0.1;
+            const sy = (r - rows/2) * 0.8 + (Math.random()-0.5)*0.08;
+            const sp = new THREE.Sprite(new THREE.SpriteMaterial({color:0x4455ff,opacity:0.0}));
+            sp.scale.set(1.3, 0.9, 1);
+            sp.position.set(sx, sy + 0.5, 0.51); // adjust relative
+            sp.userData = {phase:Math.random()*Math.PI*2, baseColor: 0x3232ff, warm: Math.random()<0.6};
+            b.add(sp);
+            lights.push(sp);
+          }
+        }
+      }
+      b.userData._windowSprites = lights;
+      city.add(b);
+    }
+  }
+  city.scale.set(1.65,1.65,1.65);
+  menuScene.add(city);
+
+  // low fog to create depth
+  const fogMat = new THREE.MeshStandardMaterial({color:0x09090a});
+  // add subtle distant haze plane
+  const haze = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshBasicMaterial({color:0x020214, opacity:0.08, transparent:true}));
+  haze.rotation.x = -Math.PI/2; haze.position.y = 1.5; menuScene.add(haze);
+
+  // store for flicker update
+  menuScene.userData.city = city;
+  menuScene.userData.time = 0;
+
+  // start the animation loop for menu scene
+  menuOverlay.style.display = 'flex';
+  animateMenu();
+}
+
+function animateMenu(){
+  menuAnimationId = requestAnimationFrame(animateMenu);
+  const t = performance.now() * 0.001;
+  menuScene.userData.time = t;
+  // orbit the camera slowly around center
+  const radius = 120;
+  const speed = 0.03;
+  menuCamera.position.x = Math.cos(t*speed) * radius;
+  menuCamera.position.z = Math.sin(t*speed) * radius * 0.86;
+  menuCamera.position.y = 38 + Math.sin(t*0.12) * 6;
+  menuCamera.lookAt(0, 8, 0);
+
+  // flicker windows: update sprite opacity and color toward cool/warm blue-ish flicker
+  menuScene.traverse(obj=>{
+    if(obj.type === 'Sprite' && obj.userData){
+      const p = obj.userData;
+      const flick = 0.2 + (Math.sin(menuScene.userData.time*6 + p.phase) * 0.4 + Math.random()*0.16);
+      const emo = Math.max(0, Math.min(1, flick));
+      // warm windows occasionally warmer (slightly yellow)
+      if(p.warm) obj.material.color.setHex(0xffca7a); else obj.material.color.setHex(0x6fa2ff);
+      obj.material.opacity = 0.02 + emo * 0.14;
+    }
+  });
+
+  menuRenderer.render(menuScene, menuCamera);
+}
+
+/* -----------------------
+   When Play clicked: stop menu animation and init full game scene using same canvas
+   ----------------------- */
+function stopMenuScene(){
+  cancelAnimationFrame(menuAnimationId);
+  menuOverlay.style.display = 'none';
+  // dispose menu scene renderer (we will reuse the canvas by creating a new renderer)
+  if(menuRenderer) { try{ menuRenderer.dispose(); }catch(e){} menuRenderer = null; }
+  menuScene = null;
+}
+
+/* -----------------------
+   Full game engine (abbreviated / adapted from prior build)
+   - initScene will reuse the same canvas (viewportCanvas)
+   ----------------------- */
+let sceneInitDone=false;
+let moonLight=null, ambientLight=null;
+function initScene(){
+  // create renderer that uses same canvas (viewportCanvas)
+  renderer = new THREE.WebGLRenderer({canvas: viewportCanvas, antialias:true});
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+  renderer.shadowMap.enabled = settings.shadows;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x07070a, 0.012);
+
+  camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 4000);
+  camera.position.set(0,1.6,0);
+
+  moonLight = new THREE.DirectionalLight(0x9fbfff, 0.95);
+  moonLight.position.set(-48,140,18);
+  moonLight.castShadow = settings.shadows;
+  scene.add(moonLight);
+
+  ambientLight = new THREE.AmbientLight(0x202225, 0.45);
+  scene.add(ambientLight);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000,4000,2,2), new THREE.MeshStandardMaterial({color:0x0b0d0f,roughness:1}));
+  ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+
+  // cleanup old arrays
+  zombies.forEach(z=>{ try{ scene.remove(z); }catch(e){} }); zombies=[]; pickups.forEach(p=>{ try{ scene.remove(p); }catch(e){} }); pickups=[]; props.forEach(p=>{ try{ if(p.mesh) scene.remove(p.mesh);}catch(e){} }); props=[]; survivors.forEach(s=>{ try{ scene.remove(s);}catch(e){} }); survivors=[]; lorePages=[];
+
+  initParticlePools();
+
+  // basic map generation (city at start)
+  generateCity();
+
+  ensureFlashlight();
+  initMinimap();
+  initControls();
+
+  // show HUD
+  hud.style.display = 'block';
+  weaponUI.style.display = 'block';
+  document.getElementById('crosshair').style.display = 'block';
+
+  sceneInitDone = true;
+}
+
+/* -----------------------
+   minimal procedural city generator (for main game)
+   ----------------------- */
+function generateCity(){
+  // create some larger ruined buildings and props (re-using earlier generator idea)
+  for(let i=0;i<60;i++){
+    const bW=10+Math.random()*24, bH=8+Math.floor(Math.random()*40), bD=10+Math.random()*22;
+    const x=(Math.random()-0.5)*700, z=(Math.random()-0.5)*700;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(bW,bH,bD), new THREE.MeshStandardMaterial({color:0x22272b,roughness:0.95}));
+    m.position.set(x,bH/2,z);
+    m.castShadow = true;
+    scene.add(m);
+    props.push({type:'building',mesh:m});
+    if(Math.random()<0.18) spawnPickup(new THREE.Vector3(x,(Math.random()*bH*0.6)+0.6,z),'ammo');
+  }
+  // initial survivors/loot/lore
+  for(let i=0;i<10;i++) spawnSurvivor(new THREE.Vector3((Math.random()-0.5)*360,0,(Math.random()-0.5)*360));
+  for(let i=0;i<12;i++) createLore('city-'+i,'City Log '+(i+1),'Fragments about the breach');
+}
+
+/* -----------------------
+   particle pools (same as prior)
+   ----------------------- */
+function initParticlePools(){ particlePools=[]; const pools = settings.particles==='low'?3:settings.particles==='medium'?5:8; for(let i=0;i<pools;i++){ const max = settings.particles==='low'?120:settings.particles==='medium'?240:420; const geom=new THREE.BufferGeometry(); const arr=new Float32Array(max*3); geom.setAttribute('position', new THREE.BufferAttribute(arr,3)); const mat=new THREE.PointsMaterial({size:0.08,transparent:true,opacity:0.95}); const pts=new THREE.Points(geom,mat); pts.userData={max,alive:[]}; scene.add(pts); particlePools.push(pts); } }
+function spawnParticles(pos,color=0x8b0000,count=12,speed=3){ for(const pool of particlePools){ const ud=pool.userData; if(ud.alive.length + count <= ud.max){ for(let i=0;i<count;i++) ud.alive.push({px:pos.x,py:pos.y,pz:pos.z,vx:(Math.random()-0.5)*speed,vy:Math.random()*speed*0.6+0.6,vz:(Math.random()-0.5)*speed,life:0,max:0.4+Math.random()*0.6}); pool.material.color.setHex(color); pool.geometry.attributes.position.needsUpdate=true; return; } } }
+function updateParticles(delta){ for(const pool of particlePools){ const ud=pool.userData; const arr=pool.geometry.attributes.position.array; let k=0; for(let i=ud.alive.length-1;i>=0;i--){ const p=ud.alive[i]; p.life += delta; p.vy -= 9.8*delta*0.7; p.px += p.vx*delta; p.py += p.vy*delta; p.pz += p.vz*delta; arr[k*3] = p.px; arr[k*3+1] = p.py; arr[k*3+2] = p.pz; k++; if(p.life >= p.max) ud.alive.splice(i,1); } pool.geometry.attributes.position.needsUpdate=true; } }
+
+/* -----------------------
+   lore / pickups / survivors (same style)
+   ----------------------- */
+let loreDB = {}, collectedLore = {};
+function createLore(id,title,text){ loreDB[id] = {id,title,text}; const pos = new THREE.Vector3((Math.random()-0.5)*500,0.6 + Math.random()*1.6,(Math.random()-0.5)*500); const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.26,10,10), new THREE.MeshStandardMaterial({color:0x9ad4ff,emissive:0x9ad4ff,emissiveIntensity:0.6})); mesh.position.copy(pos); mesh.userData={lore:true,id}; scene && scene.add(mesh); lorePages.push(mesh); }
+function collectLore(id){ if(collectedLore[id]) return; collectedLore[id] = true; localStorage.setItem('z13_lore_full', JSON.stringify(collectedLore)); showToast('Lore: ' + (loreDB[id]?.title||id)); }
+
+function spawnSurvivor(pos){ const body = new THREE.Mesh(new THREE.BoxGeometry(0.6,1.2,0.4), new THREE.MeshStandardMaterial({color:0x8fb38f})); const head = new THREE.Mesh(new THREE.BoxGeometry(0.36,0.36,0.36), new THREE.MeshStandardMaterial({color:0xd9bba6})); const g = new THREE.Group(); g.add(body); g.add(head); g.position.set(pos.x,0,pos.z); g.userData={type:'survivor',trade:{ammo:50,medkit:80},hp:100,dialog:['We hold here.']}; scene.add(g); survivors.push(g); addMinimapMarkerFor(g,'survivor'); }
+
+function spawnPickup(pos,type='ammo'){ const color = type==='ammo'?0x2b6cff:(type==='medkit'?0xff6b6b:(type==='antiviral'?0x7af2c7:0xffd46b)); const m = new THREE.Mesh(new THREE.SphereGeometry(0.28,10,10), new THREE.MeshStandardMaterial({color:color,emissive:color,emissiveIntensity:0.28})); m.position.copy(pos); m.userData={pickup:true,type}; m.castShadow=true; scene.add(m); pickups.push(m); addMinimapMarkerFor(m,'loot'); return m; }
+function tryPickup(){ for(const l of lorePages){ if(l && l.position.distanceTo(camera.position) < 2.0){ const id = l.userData?.id; if(id){ collectLore(id); try{ scene.remove(l); }catch(e){} lorePages = lorePages.filter(x=>x!==l); } return; } } let near=null, nd=Infinity; for(const p of pickups){ const d = p.position.distanceTo(camera.position); if(d<2 && d<nd){ nd=d; near=p; } } if(!near) return; const t = near.userData.type; try{ scene.remove(near); }catch(e){} pickups = pickups.filter(x=>x!==near); removeMinimapMarkerFor(near); if(t==='ammo'){ for(const k in weaponState) weaponState[k].reserve += 12 + Math.floor(Math.random()*24); showToast('+ Ammo'); sfx(920,0.06,'triangle',0.12); } else if(t==='medkit'){ playerHealth = Math.min(100, playerHealth+45); healthVal.textContent=Math.floor(playerHealth); showToast('+40 HP'); sfx(720,0.08,'sine',0.12); } else if(t==='antiviral'){ infection = Math.max(0, infection - 42); infectVal.textContent = Math.floor(infection) + '%'; showToast('Antiviral used'); sfx(760,0.08,'triangle',0.12); } else if(t==='loot'){ score += 20 + Math.floor(Math.random()*40); scoreVal.textContent = score; showToast('Loot found'); sfx(820,0.08,'sine',0.12); } updateWeaponUI(); }
+
+/* -----------------------
+   weapons functions (abbreviated)
+   ----------------------- */
+function changeWeapon(k){ if(!weapons[k]) return; currentWeapon=k; updateWeaponUI(); }
+function updateWeaponUI(){ const st = weaponState[currentWeapon]; document.getElementById('weaponName').textContent = weapons[currentWeapon].name; document.getElementById('ammoVal').textContent = st.ammo; document.getElementById('reserveVal').textContent = st.reserve; document.getElementById('invList').textContent = `Grenades:${inventory.grenades} Medkits:${inventory.medkits} Armor:${inventory.armorPlates}`; batteryVal.textContent = Math.max(0,Math.floor(battery)) + '%'; infectVal.textContent = Math.floor(infection) + '%'; flashVal.textContent = flashlightOn ? 'ON' : 'OFF'; }
+function attemptShoot(){ const w = weapons[currentWeapon], st = weaponState[currentWeapon]; if(st.reloading) return; const now = performance.now(); if(now - st.lastShot < w.rate) return; if(st.ammo <= 0){ reloadWeapon(); return; } st.lastShot = now; st.ammo--; updateWeaponUI(); ensureAudio(); if(w.melee){ sfx(360,0.08,'square',0.12); const origin = new THREE.Vector3(); camera.getWorldPosition(origin); const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); meleeHit(origin,dir,2.4,w.damage); } else if(currentWeapon==='shotgun'){ for(let i=0;i<(w.pellets||8);i++){ const origin = new THREE.Vector3(); camera.getWorldPosition(origin); const spread = new THREE.Vector3((Math.random()-0.5)*0.16,(Math.random()-0.5)*0.12,(Math.random()-0.5)*0.16); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize().add(spread).normalize(); rayDamage(origin,dir,w.damage+Math.floor(Math.random()*5),10); } sfx(680+Math.random()*120,0.06,'sawtooth',0.16); } else if(currentWeapon==='sniper'){ const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); rayDamage(origin,dir,w.damage,800); sfx(1100,0.08,'triangle',0.2); } else if(currentWeapon==='flamethrower'){ flameBurst(); } else { const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); rayDamage(origin,dir,w.damage,240); sfx(920+Math.random()*200,0.05,'sine',0.12); } }
+function reloadWeapon(){ const st = weaponState[currentWeapon], w = weapons[currentWeapon]; if(st.reloading) return; if(st.ammo >= w.mag) return; if(st.reserve <= 0) return; st.reloading = true; setTimeout(()=>{ const need = w.mag - st.ammo; const take = Math.min(need, st.reserve); st.reserve -= take; st.ammo += take; st.reloading=false; updateWeaponUI(); sfx(420,0.08,'sine',0.12); }, w.reload); }
+function meleeHit(origin,dir,range,dmg){ for(const z of zombies.slice()){ const v = z.position.clone().sub(origin); const d = Math.hypot(v.x,v.z); if(d < range){ const angle = dir.angleTo(v.normalize()); if(angle < Math.PI*0.45){ z.userData.hp -= dmg; spawnParticles(z.position.clone().add(new THREE.Vector3(0,0.6,0)),0x8b1b1b,10,3.4); if(z.userData.hp<=0) killZombie(z); } } } }
+function rayDamage(origin,dir,damage,maxRange){ const ray = new THREE.Raycaster(origin,dir,0,maxRange); let hit=null, hitDist=Infinity; for(const z of zombies){ const box = new THREE.Box3().setFromObject(z); if(ray.ray.intersectsBox(box)){ const pt = ray.ray.intersectBox(box,new THREE.Vector3()); const d = origin.distanceTo(pt); if(d < hitDist){ hitDist=d; hit={z,pt}; } } } if(hit){ const {z,pt} = hit; const falloff = Math.max(0.4,1 - hitDist/maxRange); const applied = Math.max(1, Math.round(damage*falloff)); z.userData.hp -= applied; spawnParticles(pt,0x8b1b1b, 6 + Math.floor(Math.random()*12), 3.4); if(z.userData.hp <= 0) killZombie(z); } else spawnParticles(origin.clone().add(dir.clone().multiplyScalar(maxRange*0.9)),0xffaa66,3,1.8); }
+
+/* flamethrower */
+let flameActive=false;
+function flameBurst(){ flameActive=true; const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); for(let i=0;i<8;i++){ const spread=dir.clone().add(new THREE.Vector3((Math.random()-0.5)*0.35,(Math.random()-0.2)*0.2,(Math.random()-0.5)*0.35)).normalize(); const pos=origin.clone().add(spread.clone().multiplyScalar(1.2+Math.random()*2.8)); spawnParticles(pos,0xff7a2b,6,3.6); } for(const z of zombies.slice()){ const d = z.position.distanceTo(origin); if(d<6){ z.userData.hp -= 0.8 + Math.random()*1.6; if(z.userData.hp<=0) killZombie(z); } } }
+
+/* -----------------------
+   zombies (same logic)
+   ----------------------- */
+function spawnZombie(type=null){
+  const r=Math.random(); let t=type;
+  if(!t){ if(r<0.06) t='brute'; else if(r<0.26) t='runner'; else if(r<0.4) t='spitter'; else if(r<0.52) t='crawler'; else if(r<0.58) t='bloater'; else t='walker'; }
+  const cmap = {walker:0x4aa24a, runner:0x8f2b2b, spitter:0x28a28a, crawler:0x2e2e2e, brute:0x6b6b7d, bloater:0x6b2b2b};
+  const mat = new THREE.MeshStandardMaterial({color:cmap[t]||0x4aa24a, roughness:0.95});
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.9,1.05,0.5), mat); torso.castShadow=true;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.45,0.45,0.45), new THREE.MeshStandardMaterial({color:0x4a5a33})); head.position.set(0,0.9,0);
+  const g = new THREE.Group(); g.add(torso); g.add(head);
+  const angle = Math.random()*Math.PI*2, radius = 14 + Math.random()*36;
+  g.position.set(camera.position.x + Math.cos(angle)*radius, 0.6, camera.position.z + Math.sin(angle)*radius);
+  if(t==='brute') g.userData = {type:'brute', hp:28 + wave*6, speed:0.22, attack:18};
+  else if(t==='runner') g.userData = {type:'runner', hp:6 + Math.floor(wave*0.5), speed:1.6, attack:6};
+  else if(t==='spitter') g.userData = {type:'spitter', hp:7 + Math.floor(wave*0.4), speed:0.42, attack:6, spitCooldown:2000};
+  else if(t==='crawler') g.userData = {type:'crawler', hp:4 + Math.floor(wave*0.3), speed:0.38, attack:5, stealth:true};
+  else if(t==='bloater') g.userData = {type:'bloater', hp:40 + wave*6, speed:0.18, attack:22, explode:true};
+  else g.userData = {type:'walker', hp:4 + Math.floor(wave*0.3), speed:0.48, attack:6};
+  scene.add(g); zombies.push(g); addMinimapMarkerFor(g,'zombie'); return g;
+}
+function killZombie(z){
+  if(!z) return;
+  spawnParticles(z.position.clone().add(new THREE.Vector3(0,0.6,0)),0x8b1b1b,26,5.2);
+  try{ scene.remove(z); }catch(e){} const idx = zombies.indexOf(z); if(idx>=0) zombies.splice(idx,1);
+  removeMinimapMarkerFor(z);
+  score += (z.userData.type==='brute'?60:14) + Math.floor(Math.random()*18); scoreVal.textContent = score;
+  if(Math.random() < 0.45) spawnPickup(z.position.clone(), Math.random()<0.5?'ammo':'loot');
+  if(z.userData.type==='bloater'){ spawnExplosion(z.position, 42); }
+  killsThisWave++; checkWaveClear();
+}
+function spitAcid(from,target){ const dir = target.clone().sub(from).normalize(); const proj = {pos: from.clone().add(new THREE.Vector3(0,1,0)), vel: dir.clone().multiplyScalar(5.6), life:0, max:2.4}; const iv = setInterval(()=>{ proj.pos.add(proj.vel.clone().multiplyScalar(0.06)); spawnParticles(proj.pos,0x33bb66,2,1.2); if(proj.pos.distanceTo(camera.position) < 1.2){ playerHit(10); clearInterval(iv); } proj.life += 0.06; if(proj.life > proj.max) clearInterval(iv); }, 60); }
+function spawnExplosion(pos,damage){ spawnParticles(pos,0xff7a2b,48,6.6); sfx(80,0.6,'sawtooth',0.18); for(const z of zombies.slice()){ const d = z.position.distanceTo(pos); if(d < 6.2){ z.userData.hp -= Math.max(6, Math.round(damage*(1 - d/6.2))); if(z.userData.hp <= 0) killZombie(z); } } }
+
+/* -----------------------
+   waves/missions (simplified)
+   ----------------------- */
+function spawnWave(count){ zombiesThisWave = count; killsThisWave = 0; zLeft.textContent = zombiesThisWave - killsThisWave; for(let i=0;i<count;i++) setTimeout(()=> spawnZombie(), i*120 + Math.random()*420); }
+function startWave(){ wave++; waveVal.textContent = wave; const base = 6 + Math.floor(wave*2.2); const cnt = Math.min(settings.maxZombies, base + Math.floor(wave*1.4)); spawnWave(cnt); sfx(720,0.12,'sine',0.12); }
+function checkWaveClear(){ const left = Math.max(0, zombiesThisWave - killsThisWave); zLeft.textContent = left; if(left === 0 && gameStarted){ setTimeout(()=> startWave(), 3000); showWaveBanner('Wave Cleared'); autoSave(); } }
+function showWaveBanner(txt){ const b=document.createElement('div'); b.style.position='fixed'; b.style.left='50%'; b.style.top='10%'; b.style.transform='translateX(-50%)'; b.style.padding='8px 14px'; b.style.background='rgba(0,0,0,0.6)'; b.style.color='#fff'; b.style.fontWeight='800'; b.style.zIndex=999; b.style.borderRadius='8px'; b.textContent = txt; document.body.appendChild(b); setTimeout(()=> b.style.opacity='0',4200); setTimeout(()=> b.remove(),4600); }
+
+/* -----------------------
+   AI update & player hit
+   ----------------------- */
+function computeSeparation(z){ const sep = new THREE.Vector3(); let count=0; for(const o of zombies){ if(o===z) continue; const d = z.position.distanceTo(o.position); if(d < 2.2){ const diff = z.position.clone().sub(o.position).normalize().divideScalar(d); sep.add(diff); count++; } } if(count>0) sep.divideScalar(count); return sep; }
+function playerHit(dmg, infectAdd=0){ let mitigated = dmg; if(inventory.armorPlates && inventory.armorPlates>0) mitigated = dmg * 0.6; playerHealth -= mitigated; healthVal.textContent = Math.max(0, Math.floor(playerHealth)); if(infectAdd) { infection = Math.min(100, infection + infectAdd); infectVal.textContent = Math.floor(infection) + '%'; } sfx(160,0.12,'sawtooth',0.12); const v=document.createElement('div'); v.style.position='fixed'; v.style.inset='0'; v.style.zIndex=998; v.style.pointerEvents='none'; v.style.background='radial-gradient(circle at 50% 20%, rgba(160,0,0,0.12), rgba(0,0,0,0))'; document.body.appendChild(v); setTimeout(()=> v.remove(),160); if(playerHealth <= 0 || infection >= 100) chapterFailed(); }
+
+/* -----------------------
+   controls & flashlight
+   ----------------------- */
+let keys = {}, controlsEnabled=false, mouseHeld=false;
+let sensitivity = 0.0026;
+function initControls(){
+  window.addEventListener('keydown', (e)=>{ if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return; const k=e.key.toLowerCase();
+    if(k==='w') keys.w=1; if(k==='s') keys.s=1; if(k==='a') keys.a=1; if(k==='d') keys.d=1; if(e.key==='Shift') keys.shift=1;
+    if(k==='e'){ tryPickup(); tryToggleObjective(); }
+    if(k==='r') reloadWeapon();
+    if(k==='1') changeWeapon('pistol'); if(k==='2') changeWeapon('shotgun'); if(k==='3') changeWeapon('smg'); if(k==='4') changeWeapon('sniper'); if(k==='5') changeWeapon('flamethrower'); if(k==='6') changeWeapon('bat');
+    if(k==='g'){ if(inventory.grenades && inventory.grenades>0){ inventory.grenades--; const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); const pt = origin.add(dir.multiplyScalar(6)); spawnExplosion(pt,28); showToast('-1 Grenade'); } else showToast('No grenades'); }
+    if(k==='f'){ toggleFlashlight(); }
+    if(k==='v'){ const origin=new THREE.Vector3(); camera.getWorldPosition(origin); const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); meleeHit(origin,dir,2.6,14); }
+    if(k==='t'){ if(activeTrader) openTrader(activeTrader); }
+    if(e.key === 'Escape'){ togglePause(true); }
+    if(k==='m'){ toggleMinimapLarge(); }
+    if(k==='+'||k==='='){ mini.settings.zoom = Math.max(0.4, mini.settings.zoom - 0.15); }
+    if(k==='-'){ mini.settings.zoom = Math.min(2.2, mini.settings.zoom + 0.15); }
+  });
+  window.addEventListener('keyup', (e)=>{ const k=e.key.toLowerCase(); if(k==='w') keys.w=0; if(k==='s') keys.s=0; if(k==='a') keys.a=0; if(k==='d') keys.d=0; if(e.key==='Shift') keys.shift=0; });
+  window.addEventListener('mousemove', (e)=>{ if(!controlsEnabled) return; const mvX=e.movementX||0, mvY=e.movementY||0; camera.rotation.order='YXZ'; camera.rotation.y -= mvX * sensitivity; camera.rotation.x -= mvY * sensitivity; camera.rotation.x = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, camera.rotation.x)); });
+  window.addEventListener('mousedown', (e)=>{ if(!gameStarted || paused) return; if(e.button === 0){ mouseHeld = true; attemptShoot(); }});
+  window.addEventListener('mouseup', ()=>{ mouseHeld=false; flameActive=false; });
+  document.addEventListener('pointerlockchange', ()=>{ controlsEnabled = (document.pointerLockElement === viewportCanvas); });
+  window.addEventListener('contextmenu', e => e.preventDefault());
+  viewportCanvas.addEventListener('click', ()=>{ try{ viewportCanvas.requestPointerLock(); }catch(e){} });
+}
+
+/* flashlight */
+function ensureFlashlight(){ if(!flashlight){ flashlight = new THREE.SpotLight(0xffffff, 0.0, 38, Math.PI*0.12, 0.6, 1); flashlight.castShadow = settings.shadows; flashlight.shadow.mapSize.width = 1024; flashlight.shadow.mapSize.height = 1024; scene.add(flashlight); flashlight.target = new THREE.Object3D(); scene.add(flashlight.target); } }
+function toggleFlashlight(){ ensureFlashlight(); if(battery <= 0 && !flashlightOn){ showToast('Battery dead'); return; } flashlightOn = !flashlightOn; flashlight.visible = flashlightOn; flashVal.textContent = flashlightOn ? 'ON' : 'OFF'; sfx(620,0.06,'sine',0.08); }
+
+/* -----------------------
+   minimap (same as earlier)
+   ----------------------- */
+function initMinimap(){
+  minimapContainer.style.display = 'flex';
+  minimapLegend.innerHTML = '<span style="color:#6ff">N</span> • <span style="color:#5f5">You</span> <span style="margin-left:8px;color:#f55">Z</span> <span style="margin-left:8px;color:#ffb">Loot</span>';
+  const c = minimapCanvas; c.width = mini.settings.size; c.height = mini.settings.size;
+  mini.renderer = new THREE.WebGLRenderer({canvas: c, alpha: true, antialias: true});
+  mini.renderer.setSize(c.width, c.height); mini.renderer.setPixelRatio(1);
+  mini.scene = new THREE.Scene();
+  const s = 120; mini.camera = new THREE.OrthographicCamera(-s,s,s,-s,0.1,2000); mini.camera.up.set(0,0,-1);
+  const grid = new THREE.GridHelper(2000,40,0x222222,0x111111); grid.rotation.x = Math.PI/2; grid.material.opacity = 0.25; grid.material.transparent = true; mini.scene.add(grid);
+  mini.playerMarker = createMiniSprite(0x40ff7a,1.4); mini.scene.add(mini.playerMarker);
+  minimapLarge.width = 420; minimapLarge.height = 420;
+  window.addEventListener('keydown', (e)=>{ if(e.key==='m'||e.key==='M') toggleMinimapLarge(); if(e.key==='+'||e.key==='=') mini.settings.zoom = Math.max(0.4, mini.settings.zoom - 0.15); if(e.key==='-') mini.settings.zoom = Math.min(2.2, mini.settings.zoom + 0.15);});
+}
+function createMiniSprite(hex,scale=1.0){ const mat = new THREE.SpriteMaterial({color:hex,transparent:true,opacity:1.0}); const s = new THREE.Sprite(mat); s.scale.set(6*scale,6*scale,1); return s; }
+function addMinimapMarkerFor(worldObject,type='zombie'){ if(!worldObject || !worldObject.uuid) return; if(mini.markers.has(worldObject.uuid)){ const old = mini.markers.get(worldObject.uuid); mini.scene.remove(old); mini.markers.delete(worldObject.uuid); } const color = mini.colors[type]||0xffff66; const sp = createMiniSprite(color, type==='zombie'?1.0:(type==='loot'?0.9:1.2)); sp.userData = {world:worldObject,type}; mini.markers.set(worldObject.uuid, sp); mini.scene.add(sp); return sp; }
+function removeMinimapMarkerFor(worldObject){ if(!worldObject || !worldObject.uuid) return; const m = mini.markers.get(worldObject.uuid); if(m){ try{ mini.scene.remove(m); }catch(e){} mini.markers.delete(worldObject.uuid); } }
+function updateMinimap(){ if(!mini.renderer || !camera) return; const px = camera.position.x, pz = camera.position.z; const viewSize = 120 * mini.settings.zoom; mini.camera.left = -viewSize; mini.camera.right = viewSize; mini.camera.top = viewSize; mini.camera.bottom = -viewSize; mini.camera.position.set(px, 180, pz); mini.camera.updateProjectionMatrix(); mini.playerMarker.position.set(px,1,pz); const yaw = camera.rotation.y || 0; mini.playerMarker.material.rotation = -yaw; for(const [id, sprite] of mini.markers){ const w = sprite.userData.world; if(!w) continue; let worldPos = new THREE.Vector3(); if(w.position) worldPos.copy(w.position); else if(w.userData && w.userData.pos) worldPos.copy(w.userData.pos); else continue; sprite.position.set(worldPos.x,1.0,worldPos.z); const d = Math.hypot(worldPos.x - px, worldPos.z - pz); sprite.material.opacity = d > 120 * mini.settings.zoom ? 0.0 : 1.0; } mini.renderer.render(mini.scene, mini.camera); if(mini.settings.large){ if(!mini.largeRenderer){ mini.largeRenderer = new THREE.WebGLRenderer({canvas: minimapLarge, alpha:true, antialias:true}); mini.largeRenderer.setSize(minimapLarge.width, minimapLarge.height); mini.largeRenderer.setPixelRatio(1); } mini.largeRenderer.render(mini.scene, mini.camera); } }
+function toggleMinimapLarge(){ mini.settings.large = !mini.settings.large; minimapLarge.style.display = mini.settings.large ? 'block' : 'none'; minimapContainer.style.display = mini.settings.large ? 'none' : 'flex'; }
+
+/* -----------------------
+   integration helpers & UI wiring
+   ----------------------- */
+function showToast(txt){ const t=document.createElement('div'); t.className='save-toast'; t.textContent = txt; document.body.appendChild(t); setTimeout(()=> t.style.opacity='0',900); setTimeout(()=> t.remove(),1400); }
+function showDialog(txt,duration=3200){ const dbox = document.getElementById('dialogBox'); dbox.style.display='block'; dbox.innerHTML = `<div>${txt}</div>`; setTimeout(()=> dbox.style.display='none', duration); }
+function fadeOutIn(cb){ const overlay=document.createElement('div'); overlay.style.position='fixed'; overlay.style.inset='0'; overlay.style.background='#000'; overlay.style.opacity='0'; overlay.style.zIndex=9999; overlay.style.transition='opacity 600ms'; document.body.appendChild(overlay); setTimeout(()=> overlay.style.opacity='1',10); setTimeout(()=>{ cb(); setTimeout(()=> overlay.style.opacity='0',60); setTimeout(()=> overlay.remove(),700); }, 700); }
+
+/* menu wiring */
+startBtn.addEventListener('click', ()=>{
+  // stop menu cinematic, init main game
+  stopMenuScene();
+  menuOverlay.style.display = 'none';
+  initScene();
+  ensureAudio();
+  startChapter(0);
+});
+howBtn.addEventListener('click', ()=>{ menuOverlay.style.display='none'; howto.style.display='flex'; });
+howBack.addEventListener('click', ()=>{ howto.style.display='none'; menuOverlay.style.display='flex'; });
+settingsBtn.addEventListener('click', ()=>{ menuOverlay.style.display='none'; settingsPanel.style.display='flex'; });
+settingsBack.addEventListener('click', ()=>{ settingsPanel.style.display='none'; menuOverlay.style.display='flex'; });
+creditsBtn.addEventListener('click', ()=>{ menuOverlay.style.display='none'; credits.style.display='flex'; });
+document.getElementById('creditsBack')?.addEventListener('click', ()=>{ credits.style.display='none'; menuOverlay.style.display='flex'; });
+loadBtn.addEventListener('click', ()=>{ if(loadSave()){ showToast('Save loaded'); } else showToast('No save found'); });
+
+resumeBtn.addEventListener('click', ()=> togglePause(false));
+pauseSettings.addEventListener('click', ()=>{ pauseOverlay.style.display='none'; settingsPanel.style.display='flex'; });
+saveBtn.addEventListener('click', ()=> autoSave());
+pauseMenuMain.addEventListener('click', ()=>{ pauseOverlay.style.display='none'; running=false; gameStarted=false; menuOverlay.style.display='flex'; hud.style.display='none'; weaponUI.style.display='none'; });
+
+document.getElementById('buyAmmoBtn').addEventListener('click', ()=>{ if(score>=50){ score-=50; weaponState.pistol.reserve += 48; weaponState.smg.reserve += 120; updateWeaponUI(); scoreVal.textContent=score; showToast('Bought ammo'); } else showToast('Not enough score'); });
+document.getElementById('buyMedBtn').addEventListener('click', ()=>{ if(score>=80){ score-=80; inventory.medkits++; updateWeaponUI(); scoreVal.textContent=score; showToast('Bought medkit'); } else showToast('Not enough score'); });
+document.getElementById('closeTrade').addEventListener('click', ()=> closeTrader());
+document.getElementById('retryBtn').addEventListener('click', ()=>{ document.getElementById('gameOver').style.display='none'; fadeOutIn(()=> startChapter(currentChapterIndex)); });
+document.getElementById('menuBtnEnd').addEventListener('click', ()=>{ document.getElementById('gameOver').style.display='none'; menuOverlay.style.display='flex'; });
+
+/* toggle pause */
+function togglePause(force=false){
+  paused = typeof force === 'boolean' ? force : !paused;
+  pauseOverlay.style.display = paused ? 'flex' : 'none';
+}
+
+/* -----------------------
+   campaign start / waves (simplified)
+   ----------------------- */
+const CAMPAIGN = [
+  {id:'prologue', map:'city', name:'Prologue — City Ruins', objective:'Escape the avenue'},
+  {id:'outskirts', map:'forest', name:'Chapter 1 — Outskirts', objective:'Find survivor outpost'},
+  {id:'factory', map:'factory', name:'Chapter 2 — Factory', objective:'Restore generator'},
+  {id:'facility', map:'facility', name:'Finale — Research Facility', objective:'Retrieve core'}
+];
+let currentChapterIndex=0;
+function startChapter(index){
+  currentChapterIndex = index; // simple: scene already initialised
+  wave = 0; score=0; playerHealth=100; battery=100; infection=0;
+  updateWeaponUI();
+  hud.style.display='block'; weaponUI.style.display='block'; document.getElementById('crosshair').style.display='block';
+  startWave();
+  running = true; gameStarted = true; lastFrame = performance.now(); lastSpawn = performance.now(); loop();
+}
+
+/* waves */
+function startWave(){ wave++; waveVal.textContent = wave; const base = 6 + Math.floor(wave*2.2); const cnt = Math.min(settings.maxZombies, base + Math.floor(wave*1.4)); spawnWave(cnt); showToast('Wave ' + wave); }
+function spawnWave(count){ zombiesThisWave = count; killsThisWave = 0; zLeft.textContent = zombiesThisWave - killsThisWave; for(let i=0;i<count;i++) setTimeout(()=> spawnZombie(), i*120 + Math.random()*420); }
+
+/* -----------------------
+   save/load (simple highest wave)
+   ----------------------- */
+function autoSave(){ try{ const payload = {highestWave: Math.max(wave, parseInt(localStorage.getItem('z13_highest')||'0')), lastWave: wave}; localStorage.setItem('z13_highest', payload.highestWave); showToast('Saved (highest wave: ' + payload.highestWave + ')'); }catch(e){} }
+function loadSave(){ try{ const hv = parseInt(localStorage.getItem('z13_highest')||'0'); if(hv>0){ showToast('Highest wave: ' + hv); } return hv>0; }catch(e){ return false; } }
+
+/* -----------------------
+   main loop
+   ----------------------- */
+let lastFrame = performance.now(), lastSpawn = 0;
+function loop(){
+  if(!running) return;
+  const t = performance.now(); const delta = Math.min(0.06, (t - lastFrame)/1000); lastFrame = t;
+  if(!paused){
+    update(delta);
+    renderer.render(scene, camera);
+    updateMinimap();
+  }
+  requestAnimationFrame(loop);
+}
+
+/* per-frame update (simplified) */
+function update(delta){
+  // flashlight follow (if present)
+  if(flashlight){
+    const pos = new THREE.Vector3(); camera.getWorldPosition(pos);
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
+    flashlight.position.copy(pos.clone().add(dir.clone().multiplyScalar(0.16)));
+    flashlight.target.position.copy(pos.clone().add(dir.clone().multiplyScalar(8)));
+    flashlight.target.updateMatrixWorld();
+    if(flashlightOn){ battery = Math.max(0, battery - delta * 2.0); if(battery < 15){ flashlight.intensity = 0.6 + Math.random()*1.8 * (battery / 15); } else flashlight.intensity = 2.4 * Math.max(0.18, battery/100); flashlight.visible = true; } else { flashlight.intensity = 0; flashlight.visible=false; }
+    if(battery <= 0 && flashlightOn){ flashlightOn=false; flashlight.visible=false; showToast('Battery depleted'); }
+    batteryVal.textContent = Math.max(0,Math.floor(battery)) + '%';
+  }
+
+  // movement
+  const speed = keys.shift ? 5.6 : 3.2;
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); forward.y=0; forward.normalize();
+  const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); right.y=0; right.normalize();
+  const mv = new THREE.Vector3();
+  if(keys.w) mv.add(forward); if(keys.s) mv.sub(forward); if(keys.a) mv.sub(right); if(keys.d) mv.add(right);
+  if(mv.lengthSq()>0){ mv.normalize().multiplyScalar(speed*delta); camera.position.add(mv); camera.position.x = Math.max(-1600, Math.min(1600, camera.position.x)); camera.position.z = Math.max(-1600, Math.min(1600, camera.position.z)); }
+
+  if(mouseHeld && weapons[currentWeapon].auto) attemptShoot();
+  if(flameActive && currentWeapon==='flamethrower') flameBurst();
+
+  // ambient spawns
+  if(performance.now() - lastSpawn > 1400 && !paused && running){
+    lastSpawn = performance.now();
+    const count = 1 + Math.floor(Math.random()*Math.min(4, 1 + Math.floor(wave/4)));
+    for(let i=0;i<count;i++) spawnZombie();
+  }
+
+  // survivors wander
+  for(const s of survivors){ if(!s.userData._dir || Math.random() < 0.002) s.userData._dir = new THREE.Vector3((Math.random()-0.5)*0.6,0,(Math.random()-0.5)*0.6); s.position.add(s.userData._dir.clone().multiplyScalar(delta)); }
+
+  // zombie AI
+  for(const z of zombies.slice()){
+    const ud = z.userData; ud._t = (ud._t || 0) + delta;
+    const toPlayer = new THREE.Vector3().subVectors(camera.position, z.position); const dist = Math.hypot(toPlayer.x,toPlayer.z);
+    if(dist < 50 && (!ud._growl || performance.now() - ud._growl > 3000)){ ud._growl = performance.now(); sfx(110+Math.random()*120,0.12,'triangle',0.06); }
+    const dir = camera.position.clone().setY(z.position.y).sub(z.position).normalize();
+    const sep = computeSeparation(z).multiplyScalar(0.6); dir.add(sep).normalize();
+    const spd = (ud.speed || 0.45) * (1 + wave*0.02);
+    z.position.x += dir.x * spd * delta; z.position.z += dir.z * spd * delta;
+    if(dist < 1.6 && (!ud._hit || performance.now() - ud._hit > 900)){ ud._hit = performance.now(); playerHit(ud.attack || 6, ud.type==='crawler'?0:4); }
+    z.lookAt(new THREE.Vector3(camera.position.x, z.position.y, camera.position.z));
+  }
+
+  // bob pickups
+  for(const p of pickups) p.position.y = 0.5 + Math.sin(performance.now()/420 + p.position.x)*0.07;
+
+  updateParticles(delta);
+  updatePickupPrompt();
+
+  if(killsThisWave >= zombiesThisWave && zombiesThisWave>0){ setTimeout(()=> startWave(), 1400); }
+}
+
+/* -----------------------
+   pickup prompt / traders
+   ----------------------- */
+let activeTrader=null;
+function updatePickupPrompt(){
+  let near=false;
+  for(const p of pickups) if(p.position.distanceTo(camera.position) < 2.0) { near=true; break; }
+  for(const l of lorePages) if(l.position.distanceTo(camera.position) < 2.0) { near=true; break; }
+  pickupPrompt.style.display = near ? 'block' : 'none';
+  let nearSur=false; activeTrader=null;
+  for(const s of survivors) if(s.position.distanceTo(camera.position) < 2.2){ nearSur=true; activeTrader=s; break; }
+  interactPrompt.style.display = nearSur ? 'block' : 'none';
+}
+function openTrader(surv){ activeTrader = surv; document.getElementById('tradeText').textContent = 'Survivor: Need supplies?'; document.getElementById('tradeBox').style.display='block'; }
+function closeTrader(){ activeTrader=null; document.getElementById('tradeBox').style.display='none'; }
+
+/* -----------------------
+   helper & debug
+   ----------------------- */
+window._spawnZombie = spawnZombie; window._save = autoSave; window._load = loadSave;
+
+/* -----------------------
+   final startup: init menu scene, show menu overlay
+   ----------------------- */
+initMenuScene();
+menuOverlay.style.display = 'flex';
+
+// ensure canvas resizes when window changes
+window.addEventListener('resize', () => {
+  if(menuRenderer){ menuRenderer.setSize(window.innerWidth, window.innerHeight); menuCamera.aspect = window.innerWidth / window.innerHeight; menuCamera.updateProjectionMatrix(); }
+  if(renderer){ renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); }
+});
+</script>
+</body>
+</html>
