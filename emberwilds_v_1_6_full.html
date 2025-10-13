@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Emberwilds — v1.5 "Path of Legends" (Fixed)</title>
+<style>
+:root{--accent:#ffb86b;--bg1:#0d1520;--panel:rgba(16,20,28,0.6);--muted:#9fb0c8}
+html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(180deg,#dfeefb 0%,#bfe7ff 40%,#86c3ff 100%)}
+#wrap{display:flex;gap:12px;padding:12px;height:100%;box-sizing:border-box}
+canvas{background:var(--bg1);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,0.45)}
+#ui{width:360px;color:#e8f3fb;display:flex;flex-direction:column;gap:12px}
+.panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+.title{font-weight:700;margin:0}
+.inv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.inv-slot{height:44px;background:rgba(255,255,255,0.02);display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px}
+.button{background:linear-gradient(180deg,var(--accent),#ff8a5b);border:0;padding:8px;border-radius:8px;font-weight:700;cursor:pointer;color:#102027}
+.menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:999}
+.menuBox{width:680px;padding:26px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01));text-align:center}
+.badge{display:inline-block;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.02);font-weight:700}
+.toast{position:fixed;right:16px;top:16px;z-index:120}
+.toastItem{background:#111;color:#fff;padding:8px 12px;border-radius:8px;margin-bottom:8px}
+.ach-list{max-height:320px;overflow:auto}
+.controls{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="menu" class="menu">
+  <div class="menuBox">
+    <h1 style="margin:0;font-size:44px">EMBERWILDS</h1>
+    <div style="margin:8px 0;color:#cfd8e3">v1.5 — The Path of Legends</div>
+    <div style="display:flex;gap:12px;justify-content:center;margin:12px 0">
+      <button id="continueBtn" class="button">Continue</button>
+      <button id="newGameBtn" class="button">New Game</button>
+      <button id="achMenuBtn" class="button">Achievements</button>
+    </div>
+    <div style="color:var(--muted);margin-top:8px">Seed: <span id="seedDisplay"></span></div>
+  </div>
+</div>
+
+<div id="wrap">
+  <canvas id="game" width="980" height="660" aria-label="Game canvas"></canvas>
+  <div id="ui">
+    <div class="panel"><div class="title">Emberwilds — v1.5</div><div class="controls">WASD Move · E Interact/Mine · B Build Mode · Q Cast Spell · C Craft · P Achievements</div></div>
+    <div class="panel"><div style="display:flex;justify-content:space-between"><div>Health</div><div id="health">100</div></div><div style="display:flex;justify-content:space-between"><div>Mana</div><div id="mana">50</div></div><div style="display:flex;justify-content:space-between"><div>Day</div><div id="day">1</div></div></div>
+    <div class="panel"><div style="display:flex;justify-content:space-between"><strong>Inventory</strong><div><button id="toggleInv" class="button">Toggle</button></div></div><div id="inventory" class="inv-grid" aria-live="polite"></div></div>
+    <div class="panel"><strong>Build / Craft</strong><div style="display:flex;gap:8px;margin-top:8px"><button id="toggleBuild" class="button">Build Mode</button><button id="openCraft" class="button">Craft</button></div><div style="margin-top:8px" id="buildInfo"></div></div>
+    <div class="panel"><strong>Quests / Log</strong><div id="log" style="max-height:140px;overflow:auto"></div></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- Achievements Modal -->
+<div id="achModal" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:200"> 
+  <div style="background:rgba(20,24,30,0.9);padding:18px;border-radius:10px;color:#fff;width:540px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><strong>Achievements</strong><button id="closeAch" class="button">Close</button></div>
+    <div class="ach-list" id="achList" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script>
+// Emberwilds v1.5 — cleaned/fixed HTML document
+// Fixed issues: removed duplicate declarations (ACHIEVEMENTS, renderInventory), ensured functions declared once and in sensible order.
+
+// constants
+const TILE = 40; const MAP_W = 140, MAP_H = 90; const VIEW_W = 980, VIEW_H = 660;
+
+// seed & rng
+function seededRandom(seed){ let s = seed % 2147483647; if(s<=0) s+=2147483646; return function(){ s = s*16807 % 2147483647; return (s-1)/2147483646; }; }
+const seed = Number(localStorage.getItem('seed') || (Date.now()%100000)); localStorage.setItem('seed', String(seed)); const rng = seededRandom(seed);
+document.getElementById('seedDisplay').textContent = seed;
+
+// canvas
+const canvas = document.getElementById('game'); const ctx = canvas.getContext('2d');
+
+// state
+let paused = true; let day = Number(localStorage.getItem('day')||1); let timeOfDay = Number(localStorage.getItem('time')||360);
+let health = Number(localStorage.getItem('health')||100); let mana = Number(localStorage.getItem('mana')||50);
+const inventory = JSON.parse(localStorage.getItem('inv')||JSON.stringify({wood:5,stone:3,iron_ore:0,meat:0,bed:0,chest:0,wall:0,torch:0,iron_sword:0,pickaxe:0}));
+const skills = JSON.parse(localStorage.getItem('skills')||JSON.stringify({mining:0,crafting:0,combat:0,magic:0,building:0}));
+const achievements = JSON.parse(localStorage.getItem('achievements')||JSON.stringify({}));
+
+// world
+const map = Array.from({length:MAP_H}, ()=>Array.from({length:MAP_W}, ()=>({tile:'grass',biome:'plains'})));
+for(let y=0;y<MAP_H;y++) for(let x=0;x<MAP_W;x++){ const v = rng(); if(v<0.06) map[y][x].biome='water'; else if(v<0.18) map[y][x].biome='desert'; else if(v<0.46) map[y][x].biome='forest'; else if(v<0.64) map[y][x].biome='mountain'; else if(v<0.72) map[y][x].biome='tundra'; else map[y][x].biome='plains'; map[y][x].tile = map[y][x].biome==='water'?'water':(map[y][x].biome==='desert'?'sand':(map[y][x].biome==='mountain'?'rock':(map[y][x].biome==='forest'?'forest':'grass')));
+}
+
+// objects (trees, ores), built structures, farmland
+const objects = {}; const built = {}; const farmland = {};
+for(let y=0;y<MAP_H;y++) for(let x=0;x<MAP_W;x++){ const b=map[y][x].biome; if(b==='forest' && rng()>0.75) objects[`${x},${y}`]={type:'tree',hp:4,maxHp:4}; if(b==='mountain' && rng()>0.82){ const r=rng(); if(r>0.96) objects[`${x},${y}`]={type:'ore_gold',hp:5,maxHp:5}; else if(r>0.86) objects[`${x},${y}`]={type:'ore_iron',hp:4,maxHp:4}; else objects[`${x},${y}`]={type:'rock',hp:4,maxHp:4}; } }
+
+// entities & enemies
+const entities = []; const enemyTypes = {wolf:{hp:16,atk:6,speed:2.6,biomes:['forest','tundra']},bandit:{hp:22,atk:8,speed:1.8,biomes:['plains','forest']},boss:{hp:180,atk:18,speed:1.1,biomes:['cave']}};
+function spawnEntity(type,x,y){ entities.push({id:Math.random().toString(36).slice(2),type,x,y,hp:enemyTypes[type].hp}); }
+for(let i=0;i<45;i++){ const x=Math.floor(rng()*MAP_W), y=Math.floor(rng()*MAP_H); const b=map[y][x].biome; if(enemyTypes.wolf.biomes.includes(b) && rng()>0.86) spawnEntity('wolf',x+0.5,y+0.5); if(enemyTypes.bandit.biomes.includes(b) && rng()>0.99) spawnEntity('bandit',x+0.5,y+0.5); }
+
+// player
+const player = {x:Math.floor(MAP_W/2)+0.5,y:Math.floor(MAP_H/2)+0.5,speed:6,size:0.6,buildMode:false}; let keys={};
+
+// combat & magic
+let attackCooldown=0; const ATTACK_COOLDOWN=0.9; const ATTACK_RANGE=1.6; let damageTexts=[]; let particles=[];
+const spells = {fireball:{cost:12,cool:1.2,range:6,dmg:34},heal:{cost:10,cool:2,heal:28},lightorb:{cost:6,cool:0.5}}; let spellCooldowns = {fireball:0,heal:0,lightorb:0};
+
+// crafting & building recipes
+const RECIPES=[{id:'pickaxe',name:'Pickaxe',req:{wood:2,stone:2}}, {id:'bed',name:'Bed',req:{wood:4}}, {id:'chest',name:'Chest',req:{wood:3}}, {id:'wall',name:'Wall',req:{wood:2,stone:1}}, {id:'torch',name:'Torch',req:{wood:1}}];
+function canAfford(req){ for(const k in req) if((inventory[k]||0) < req[k]) return false; return true; }
+
+// achievements definitions (single declaration)
+const ACHIEVEMENTS = [
+  {id:'first_kill',title:'First Blood',desc:'Defeat your first enemy'},
+  {id:'crafted_any',title:'Apprentice Crafter',desc:'Craft any item'},
+  {id:'built_any',title:'Builder',desc:'Place any building'}
+];
+
+// logging & toast
+function addLog(t){ const el=document.getElementById('log'); const d=document.createElement('div'); d.textContent=t; el.prepend(d); }
+function toast(msg){ const cont=document.getElementById('toast'); const it=document.createElement('div'); it.className='toastItem'; it.textContent=msg; cont.appendChild(it); setTimeout(()=>{ it.remove(); },3500); }
+
+// saving
+function saveAll(){ localStorage.setItem('inv', JSON.stringify(inventory)); localStorage.setItem('day', day); localStorage.setItem('time', timeOfDay); localStorage.setItem('health', health); localStorage.setItem('mana', mana); localStorage.setItem('skills', JSON.stringify(skills)); localStorage.setItem('achievements', JSON.stringify(achievements)); }
+
+// helpers
+function randInt(a,b){ return Math.floor(rng()*(b-a+1))+a; }
+function worldToScreen(wx,wy,cam){ return {x:(wx-cam.x)*TILE + VIEW_W/2, y:(wy-cam.y)*TILE + VIEW_H/2}; }
+
+// input
+window.addEventListener('keydown', e=>{ if(e.repeat) return; keys[e.key.toLowerCase()]=true; if(e.key==='e'||e.key==='E'){ interactOrMine(); } if(e.key==='b'||e.key==='B'){ player.buildMode=!player.buildMode; document.getElementById('buildInfo').textContent = player.buildMode? 'Build Mode: ON (click map to place)' : 'Build Mode: OFF'; } if(e.key==='c'||e.key==='C'){ openCrafting(); } if(e.key==='p'||e.key==='P'){ toggleAchModal(); } if(e.key==='q'||e.key==='Q'){ castSpellPrompt(); } });
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+
+// mouse for placement & casting fireball
+canvas.addEventListener('click', e=>{ const rect=canvas.getBoundingClientRect(); const mx=e.clientX-rect.left, my=e.clientY-rect.top; const gx = Math.floor(player.x + (mx - VIEW_W/2)/TILE); const gy = Math.floor(player.y + (my - VIEW_H/2)/TILE); if(player.buildMode){ if(placeBuild('wall', gx, gy)) saveAll(); } else { /* placeholder for other click actions */ } });
+
+// interaction & mining
+let mining={active:false,target:null,progress:0}; function interactOrMine(){ const px=Math.floor(player.x), py=Math.floor(player.y); for(let oy=-1; oy<=1; oy++) for(let ox=-1; ox<=1; ox++){ const key=`${px+ox},${py+oy}`; if(objects[key]){ mining.active=true; mining.target=key; mining.progress=0; addLog('Started mining '+objects[key].type); return; } if(built[key] && built[key].type==='chest'){ addLog('Opened chest (placeholder)'); return; } } addLog('Nothing to interact with nearby'); }
+function stopMining(){ mining.active=false; mining.target=null; mining.progress=0; }
+
+// auto-attack when in range
+function findNearest(range=ATTACK_RANGE){ let n=null, nd=999; for(const e of entities){ const d=Math.hypot(e.x-player.x,e.y-player.y); if(d<range && d<nd){ nd=d; n=e; } } return n; }
+function performAutoAttack(target){ if(!target) return; if(attackCooldown>0) return; const dmg = inventory.iron_sword?12:6; target.hp-=dmg; attackCooldown=ATTACK_COOLDOWN; damageTexts.push({x:target.x,y:target.y,text:'-'+dmg,life:1}); spawnParticles(target.x,target.y,8); addLog('Hit '+target.type+' for '+dmg); if(target.hp<=0){ addLog('Defeated '+target.type); if(target.type==='wolf') inventory.meat=(inventory.meat||0)+1; if(target.type==='bandit') inventory.gold=(inventory.gold||0)+5; const idx=entities.indexOf(target); if(idx>=0) entities.splice(idx,1); saveAll(); renderInventory(); unlockAchievement('first_kill'); } }
+
+// spells
+function canCast(sp){ return mana >= spells[sp].cost && spellCooldowns[sp] <= 0; }
+function castFireball(tx,ty){ if(!canCast('fireball')){ addLog('Not enough mana or on cooldown'); return; } mana -= spells.fireball.cost; spellCooldowns.fireball = spells.fireball.cool; const angle = Math.atan2(ty-player.y, tx-player.x); const speed=8; const proj = {x:player.x, y:player.y, vx:Math.cos(angle)*speed, vy:Math.sin(angle)*speed, life:2, dmg:spells.fireball.dmg}; projectiles.push(proj); addLog('Cast Fireball'); saveAll(); }
+function castHeal(){ if(!canCast('heal')){ addLog('Cannot cast heal'); return; } mana -= spells.heal.cost; spellCooldowns.heal = spells.heal.cool; health = Math.min(200, health + spells.heal.heal); addLog('Healed '+spells.heal.heal); saveAll(); }
+function castLight(){ if(!canCast('lightorb')){ addLog('Cannot cast light'); return; } mana -= spells.lightorb.cost; spellCooldowns.lightorb = spells.lightorb.cool; addLog('Light orb cast (placeholder)'); saveAll(); }
+
+// simple projectile system
+let projectiles=[];
+
+// particles
+function spawnParticles(x,y,count=8){ for(let i=0;i<count;i++){ particles.push({x,y,vx:(rng()-0.5)*3,vy:(rng()-0.5)*3,life:0.6+rng()*0.8,sz:2+rng()*3}); } }
+
+// crafting & building functions
+function craft(id){ const r = RECIPES.find(x=>x.id===id); if(!r) return; if(!canAfford(r.req)){ addLog('Not enough materials'); return; } for(const k in r.req) inventory[k]-=r.req[k]; inventory[id]=(inventory[id]||0)+1; addLog('Crafted '+r.name); saveAll(); renderInventory(); updateAchievementsProgress('crafted_any',1); }
+function placeBuild(type, gx, gy){ const key=`${gx},${gy}`; if(built[key]){ addLog('Space occupied'); return false; } const cost = (type==='wall')?{wood:2,stone:1}:(type==='bed'?{wood:4}:{wood:3}); if(!canAfford(cost)){ addLog('Not enough to build'); return false; } for(const k in cost) inventory[k]-=cost[k]; built[key]={type}; addLog('Built '+type+' at '+key); renderInventory(); saveAll(); updateAchievementsProgress('built_any',1); return true; }
+
+// achievements management
+function unlockAchievement(id){ if(achievements[id]) return; achievements[id]=true; localStorage.setItem('achievements', JSON.stringify(achievements)); toast('Achievement unlocked: '+(ACHIEVEMENTS.find(a=>a.id===id)||{title:id}).title); renderAchievements(); }
+function updateAchievementsProgress(id, amount){ if(id==='crafted_any') unlockAchievement('crafted_any'); if(id==='built_any') unlockAchievement('built_any'); }
+function renderAchievements(){ const el=document.getElementById('achList'); el.innerHTML=''; for(const a of ACHIEVEMENTS){ const div=document.createElement('div'); div.style.padding='8px'; div.style.borderBottom='1px solid rgba(255,255,255,0.03)'; const unlocked = achievements[a.id]; div.innerHTML = `<strong>${a.title}</strong> <div style="font-size:13px;color:var(--muted)">${a.desc}</div>` + (unlocked? '<div style="color:#b7ffb7">UNLOCKED</div>':'' ); el.appendChild(div); } }
+
+// crafting UI
+function openCrafting(){ const items=RECIPES.map(r=>`<div style="display:flex;justify-content:space-between;padding:6px;border-radius:6px;background:rgba(255,255,255,0.02);margin-bottom:6px"><div><strong>${r.name}</strong><div style="font-size:12px;color:var(--muted)">${Object.entries(r.req).map(([k,v])=>k+':'+v).join(', ')}</div></div><div><button data-id="${r.id}" class="button">Craft</button></div></div>`).join(''); const modal = document.createElement('div'); modal.style= 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:250'; modal.innerHTML = `<div style="background:rgba(10,12,16,0.96);padding:14px;border-radius:10px;color:#fff;width:420px"> <div style="display:flex;justify-content:space-between;align-items:center"><strong>Crafting</strong><button id="closeCraft" class="button">Close</button></div><div style="margin-top:8px">${items}</div></div>`; document.body.appendChild(modal); modal.querySelector('#closeCraft').addEventListener('click', ()=>modal.remove()); modal.querySelectorAll('button[data-id]').forEach(b=>b.addEventListener('click', ()=>{ craft(b.dataset.id); modal.remove(); })); }
+
+// inventory render (single definition)
+function renderInventory(){ const el=document.getElementById('inventory'); el.innerHTML=''; const icons={wood:'🪵',stone:'🪨',iron_ore:'⛏️',meat:'🍖',bed:'🛏️',chest:'📦',wall:'🧱',torch:'🔦',iron_sword:'⚔️',pickaxe:'🪓'}; const keysOrder=['wood','stone','iron_ore','meat','bed','chest','wall','torch','pickaxe','iron_sword']; keysOrder.forEach(k=>{ const div=document.createElement('div'); div.className='inv-slot'; div.innerHTML = `<div style="width:28px">${icons[k]||'🔷'}</div><div style="font-size:13px">${k}: ${inventory[k]||0}</div>`; el.appendChild(div); }); }
+
+// UI buttons wiring
+function wireMenu(){ document.getElementById('continueBtn').addEventListener('click', ()=>{ document.getElementById('menu').style.display='none'; paused=false; toast('Game resumed'); }); document.getElementById('newGameBtn').addEventListener('click', ()=>{ if(confirm('Start new game? Clear save?')){ localStorage.clear(); location.reload(); } }); document.getElementById('toggleInv').addEventListener('click', ()=>{ const inv=document.getElementById('inventory'); inv.style.display = inv.style.display==='none'?'grid':'none'; }); document.getElementById('toggleBuild').addEventListener('click', ()=>{ player.buildMode=!player.buildMode; document.getElementById('buildInfo').textContent = player.buildMode? 'Build Mode: ON (click to place walls)' : 'Build Mode: OFF'; }); document.getElementById('openCraft').addEventListener('click', openCrafting); document.getElementById('achMenuBtn').addEventListener('click', ()=>toggleAchModal()); document.getElementById('closeAch').addEventListener('click', ()=>toggleAchModal()); }
+wireMenu();
+
+// game loop
+let last = performance.now(); function step(now){ const dt = Math.min(0.05,(now-last)/1000); last=now; if(!paused){ tick(dt); render(); } requestAnimationFrame(step); }
+
+function tick(dt){ timeOfDay += dt*30; if(timeOfDay>=1440){ timeOfDay-=1440; day++; } mana = Math.min(200, mana + dt*3); let dx=0,dy=0; if(keys['w']||keys['arrowup']) dy-=1; if(keys['s']||keys['arrowdown']) dy+=1; if(keys['a']||keys['arrowleft']) dx-=1; if(keys['d']||keys['arrowright']) dx+=1; if(dx||dy){ const len=Math.hypot(dx,dy); dx/=len; dy/=len; player.x += dx*player.speed*dt; player.y += dy*player.speed*dt; } player.x = Math.max(0.5, Math.min(MAP_W-0.5, player.x)); player.y = Math.max(0.5, Math.min(MAP_H-0.5, player.y)); if(mining.active && objects[mining.target]){ const obj=objects[mining.target]; const tool = inventory.pickaxe?2:1; mining.progress += dt*tool; if(mining.progress >= obj.maxHp){ if(obj.type==='tree') inventory.wood=(inventory.wood||0)+ (inventory.pickaxe?2:1); if(obj.type==='rock') inventory.stone=(inventory.stone||0)+1; if(obj.type==='ore_iron') inventory.iron_ore=(inventory.iron_ore||0)+1; delete objects[mining.target]; addLog('Mined '+obj.type); renderInventory(); saveAll(); mining.active=false; mining.target=null; mining.progress=0; updateAchievementsProgress('crafted_any',0); } } for(const e of entities){ const d=Math.hypot(e.x-player.x,e.y-player.y); if(d<8){ const nx=(player.x-e.x)/d, ny=(player.y-e.y)/d; e.x += -nx*enemyTypes[e.type].speed*dt*-1; e.y += -ny*enemyTypes[e.type].speed*dt*-1; if(d<1.0){ health = Math.max(0, health - (enemyTypes[e.type].atk*dt)); } } else { e.x += (Math.sin((performance.now()+e.x*13)/1000)+ (rng()-0.5))*0.05*dt; e.y += (Math.cos((performance.now()+e.y*7)/1000)+ (rng()-0.5))*0.05*dt; } } attackCooldown = Math.max(0, attackCooldown - dt); for(const s in spellCooldowns) spellCooldowns[s]= Math.max(0, spellCooldowns[s]-dt); const nearest = findNearest(); if(nearest && attackCooldown<=0){ performAutoAttack(nearest); } for(let i=projectiles.length-1;i>=0;i--){ const p=projectiles[i]; p.x += p.vx*dt; p.y += p.vy*dt; p.life -= dt; for(const e of entities){ const d=Math.hypot(e.x-p.x,e.y-p.y); if(d<0.8){ e.hp -= p.dmg; projectiles.splice(i,1); spawnParticles(e.x,e.y,10); if(e.hp<=0){ addLog('Defeated '+e.type); const idx=entities.indexOf(e); if(idx>=0) entities.splice(idx,1); } break; } } } for(let i=particles.length-1;i>=0;i--){ particles[i].life -= dt; particles[i].x += particles[i].vx*dt; particles[i].y += particles[i].vy*dt; if(particles[i].life<=0) particles.splice(i,1); } }
+
+// rendering
+function render(){ const cam={x:player.x,y:player.y}; ctx.clearRect(0,0,VIEW_W,VIEW_H); const halfW = VIEW_W/TILE/2, halfH = VIEW_H/TILE/2; const sx = Math.max(0, Math.floor(cam.x-halfW)-2), sy = Math.max(0, Math.floor(cam.y-halfH)-2); const ex = Math.min(MAP_W, Math.ceil(cam.x+halfW)+2), ey = Math.min(MAP_H, Math.ceil(cam.y+halfH)+2); for(let y=sy;y<ey;y++) for(let x=sx;x<ex;x++){ const s=worldToScreen(x,y,cam); const cell = map[y][x]; if(cell.tile==='water'){ ctx.fillStyle='#1f6db0'; } else if(cell.tile==='sand'){ ctx.fillStyle='#e0c07a'; } else if(cell.tile==='rock'){ ctx.fillStyle='#7d7d7d'; } else if(cell.tile==='forest'){ ctx.fillStyle='#2f7b3a'; } else { ctx.fillStyle='#6eb46a'; } ctx.fillRect(s.x,s.y,TILE,TILE); ctx.strokeStyle='rgba(0,0,0,0.04)'; ctx.strokeRect(s.x,s.y,TILE,TILE); const key=`${x},${y}`; if(objects[key]){ const o=objects[key]; const ox=s.x+TILE*0.2, oy=s.y+TILE*0.15; if(o.type==='tree'){ ctx.fillStyle='#5a3b1f'; ctx.fillRect(ox+TILE*0.08, oy+TILE*0.25, TILE*0.12, TILE*0.4); ctx.beginPath(); ctx.fillStyle='#1f6c2a'; ctx.ellipse(ox+TILE*0.18, oy+TILE*0.05, TILE*0.32, TILE*0.26,0,0,Math.PI*2); ctx.fill(); } else { ctx.fillStyle='#8a8a8a'; ctx.fillRect(ox,oy,TILE*0.3,TILE*0.3); } } } for(const k in built){ const [x,y]=k.split(',').map(Number); const s=worldToScreen(x,y,cam); ctx.fillStyle='#8b6f4a'; ctx.fillRect(s.x+TILE*0.1,s.y+TILE*0.1,TILE*0.8,TILE*0.8); ctx.fillStyle='#000'; ctx.fillText(built[k].type, s.x+4, s.y+14); } for(const e of entities){ const s=worldToScreen(e.x,e.y,cam); ctx.fillStyle = e.type==='wolf'?'#cfcfcf':'#c58b6a'; ctx.beginPath(); ctx.ellipse(s.x+TILE*0.5, s.y+TILE*0.5, TILE*0.18,TILE*0.14,0,0,Math.PI*2); ctx.fill(); const hbW=28; ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(s.x+TILE*0.5-hbW/2, s.y+4, hbW,6); ctx.fillStyle='#ff4d4d'; ctx.fillRect(s.x+TILE*0.5-hbW/2+1, s.y+5, (hbW-2)*Math.max(0,e.hp/enemyTypes[e.type].hp),4); } const p=worldToScreen(player.x,player.y,cam); ctx.fillStyle='#ffd7b5'; ctx.beginPath(); ctx.arc(p.x+TILE*0.5,p.y+TILE*0.5,TILE*0.28,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.beginPath(); const cdPct = 1 - (attackCooldown/ATTACK_COOLDOWN); ctx.arc(p.x+TILE*0.5, p.y+TILE*0.5+TILE*0.36, 12, -Math.PI/2, -Math.PI/2+Math.PI*2*cdPct); ctx.stroke(); ctx.font='bold 14px sans-serif'; for(const d of damageTexts){ const s=worldToScreen(d.x,d.y,cam); ctx.fillStyle='#ffdddd'; ctx.fillText(d.text, s.x+TILE*0.4, s.y+TILE*0.4); d.life -= 0.016; } damageTexts = damageTexts.filter(d=>d.life>0); for(const pjt of projectiles){ const s=worldToScreen(pjt.x,pjt.y,cam); ctx.fillStyle='orange'; ctx.beginPath(); ctx.arc(s.x+TILE*0.5, s.y+TILE*0.5, 6,0,Math.PI*2); ctx.fill(); } for(const pt of particles){ const s=worldToScreen(pt.x,pt.y,cam); ctx.globalAlpha = Math.max(0,pt.life); ctx.fillStyle='rgba(255,200,120,0.9)'; ctx.beginPath(); ctx.arc(s.x+TILE*0.5,s.y+TILE*0.5,pt.sz,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; } document.getElementById('health').textContent = Math.round(health); document.getElementById('mana').textContent = Math.round(mana); document.getElementById('day').textContent = day; }
+
+// projectile spawn helper
+function spawnProjectile(x,y,vx,vy,dmg){ projectiles.push({x,y,vx,vy,dmg,life:3}); }
+
+// utility to spawn particles on mine (single def)
+function spawnParticles(x,y,count=8){ for(let i=0;i<count;i++){ particles.push({x:x+rng()*0.6-0.3,y:y+rng()*0.6-0.3,vx:(rng()-0.5)*2,vy:(rng()-0.5)*2,life:0.6+rng()*0.8,sz:1+rng()*3}); } }
+
+// start game loop
+requestAnimationFrame(step);
+
+// initial UI render and save
+renderInventory(); renderAchievements(); saveAll(); addLog('Welcome to Emberwilds v1.5 — open the menu to continue.');
+</script>
+</body>
+</html>
