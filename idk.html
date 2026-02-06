@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Puzzle Platformer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            background: #0a0e27;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            padding: 20px;
+        }
+        
+        canvas {
+            display: block;
+            background: #1a1e3a;
+            border-radius: 8px;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.3);
+        }
+        
+        #ui {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #fff;
+            font-size: 18px;
+        }
+        
+        #controls {
+            margin-top: 10px;
+            color: #aaa;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        .button {
+            background: #4a90e2;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .button:hover {
+            background: #357abd;
+            transform: translateY(-2px);
+        }
+        
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            color: #fff;
+            padding: 30px 50px;
+            border-radius: 12px;
+            font-size: 24px;
+            text-align: center;
+            display: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div>Level: <span id="levelDisplay">1</span></div>
+            <div>Moves: <span id="movesDisplay">0</span></div>
+            <button class="button" onclick="game.resetLevel()">Reset Level</button>
+        </div>
+        <div id="controls">
+            Arrow Keys or WASD to Move | Space to Jump | R to Reset
+        </div>
+    </div>
+    <div id="message"></div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        class Game {
+            constructor() {
+                this.tileSize = 40;
+                this.gravity = 0.6;
+                this.currentLevel = 0;
+                this.moves = 0;
+                this.keys = {};
+                
+                this.levels = [
+                    {
+                        name: "The Beginning",
+                        map: [
+                            "####################",
+                            "#P                 #",
+                            "#                  #",
+                            "#     ####         #",
+                            "#                  #",
+                            "#  K      ####     #",
+                            "#  #               #",
+                            "#  #     B    #### #",
+                            "#  ######D####     #",
+                            "#                 G#",
+                            "####################"
+                        ],
+                        hint: "Collect the key to unlock the door!"
+                    },
+                    {
+                        name: "Box Puzzle",
+                        map: [
+                            "####################",
+                            "#P                 #",
+                            "#                  #",
+                            "#   B   B          #",
+                            "#  ###S###         #",
+                            "#     #            #",
+                            "#     #    B      ##",
+                            "#     #   ###S### G#",
+                            "#K    #D###     ####",
+                            "####################"
+                        ],
+                        hint: "Push boxes onto switches to open the door!"
+                    },
+                    {
+                        name: "Leap of Faith",
+                        map: [
+                            "####################",
+                            "#P                 #",
+                            "#                  #",
+                            "###                #",
+                            "#      ####        #",
+                            "#                  #",
+                            "#   B    B    K    #",
+                            "#  ###  ###  ####  #",
+                            "#     D           G#",
+                            "####################"
+                        ],
+                        hint: "Use boxes as stepping stones!"
+                    }
+                ];
+                
+                this.loadLevel(this.currentLevel);
+                this.setupControls();
+                this.gameLoop();
+            }
+            
+            loadLevel(levelIndex) {
+                this.moves = 0;
+                document.getElementById('movesDisplay').textContent = this.moves;
+                document.getElementById('levelDisplay').textContent = levelIndex + 1;
+                
+                const level = this.levels[levelIndex];
+                this.entities = [];
+                this.platforms = [];
+                this.boxes = [];
+                this.switches = [];
+                this.doors = [];
+                this.keys = [];
+                this.hasKey = false;
+                
+                for (let y = 0; y < level.map.length; y++) {
+                    for (let x = 0; x < level.map[y].length; x++) {
+                        const char = level.map[y][x];
+                        const posX = x * this.tileSize;
+                        const posY = y * this.tileSize;
+                        
+                        switch(char) {
+                            case '#':
+                                this.platforms.push({x: posX, y: posY, w: this.tileSize, h: this.tileSize});
+                                break;
+                            case 'P':
+                                this.player = {
+                                    x: posX,
+                                    y: posY,
+                                    w: 30,
+                                    h: 30,
+                                    vx: 0,
+                                    vy: 0,
+                                    speed: 4,
+                                    jumpPower: 12,
+                                    onGround: false
+                                };
+                                break;
+                            case 'B':
+                                this.boxes.push({x: posX, y: posY, w: this.tileSize, h: this.tileSize, vx: 0, vy: 0});
+                                break;
+                            case 'S':
+                                this.switches.push({x: posX, y: posY, w: this.tileSize, h: 10, active: false});
+                                break;
+                            case 'D':
+                                this.doors.push({x: posX, y: posY, w: this.tileSize, h: this.tileSize * 2, locked: true});
+                                break;
+                            case 'K':
+                                this.keys.push({x: posX + 10, y: posY + 10, w: 20, h: 20});
+                                break;
+                            case 'G':
+                                this.goal = {x: posX, y: posY, w: this.tileSize, h: this.tileSize};
+                                break;
+                        }
+                    }
+                }
+            }
+            
+            setupControls() {
+                window.addEventListener('keydown', (e) => {
+                    this.keys[e.key.toLowerCase()] = true;
+                    
+                    if (e.key.toLowerCase() === 'r') {
+                        this.resetLevel();
+                    }
+                });
+                
+                window.addEventListener('keyup', (e) => {
+                    this.keys[e.key.toLowerCase()] = false;
+                });
+            }
+            
+            update() {
+                // Player movement
+                this.player.vx = 0;
+                
+                if (this.keys['arrowleft'] || this.keys['a']) {
+                    this.player.vx = -this.player.speed;
+                }
+                if (this.keys['arrowright'] || this.keys['d']) {
+                    this.player.vx = this.player.speed;
+                }
+                if ((this.keys[' '] || this.keys['arrowup'] || this.keys['w']) && this.player.onGround) {
+                    this.player.vy = -this.player.jumpPower;
+                    this.player.onGround = false;
+                }
+                
+                // Apply gravity
+                this.player.vy += this.gravity;
+                
+                // Update position
+                this.player.x += this.player.vx;
+                this.player.y += this.player.vy;
+                
+                // Check platform collisions
+                this.player.onGround = false;
+                this.checkCollisions(this.player);
+                
+                // Update boxes
+                for (let box of this.boxes) {
+                    box.vy += this.gravity;
+                    box.y += box.vy;
+                    box.x += box.vx;
+                    box.vx *= 0.8;
+                    this.checkCollisions(box);
+                }
+                
+                // Push boxes
+                for (let box of this.boxes) {
+                    if (this.checkCollision(this.player, box)) {
+                        if (this.player.vx > 0) {
+                            box.vx = 3;
+                        } else if (this.player.vx < 0) {
+                            box.vx = -3;
+                        }
+                    }
+                }
+                
+                // Check switches
+                for (let sw of this.switches) {
+                    sw.active = false;
+                    for (let box of this.boxes) {
+                        if (this.checkCollision(box, sw)) {
+                            sw.active = true;
+                        }
+                    }
+                }
+                
+                // Update doors
+                const allSwitchesActive = this.switches.length === 0 || this.switches.every(sw => sw.active);
+                for (let door of this.doors) {
+                    if (allSwitchesActive || this.hasKey) {
+                        door.locked = false;
+                    }
+                }
+                
+                // Collect keys
+                for (let i = this.keys.length - 1; i >= 0; i--) {
+                    if (this.checkCollision(this.player, this.keys[i])) {
+                        this.keys.splice(i, 1);
+                        this.hasKey = true;
+                        this.showMessage("Key collected!", 1000);
+                    }
+                }
+                
+                // Check goal
+                if (this.goal && this.checkCollision(this.player, this.goal)) {
+                    this.nextLevel();
+                }
+                
+                // Count moves
+                if (this.player.vx !== 0) {
+                    this.moves += 0.016;
+                    document.getElementById('movesDisplay').textContent = Math.floor(this.moves);
+                }
+            }
+            
+            checkCollisions(entity) {
+                // Platform collisions
+                for (let platform of this.platforms) {
+                    if (this.checkCollision(entity, platform)) {
+                        // Determine collision side
+                        const overlapX = Math.min(entity.x + entity.w - platform.x, platform.x + platform.w - entity.x);
+                        const overlapY = Math.min(entity.y + entity.h - platform.y, platform.y + platform.h - entity.y);
+                        
+                        if (overlapX < overlapY) {
+                            if (entity.x < platform.x) {
+                                entity.x = platform.x - entity.w;
+                            } else {
+                                entity.x = platform.x + platform.w;
+                            }
+                            entity.vx = 0;
+                        } else {
+                            if (entity.y < platform.y) {
+                                entity.y = platform.y - entity.h;
+                                entity.vy = 0;
+                                entity.onGround = true;
+                            } else {
+                                entity.y = platform.y + platform.h;
+                                entity.vy = 0;
+                            }
+                        }
+                    }
+                }
+                
+                // Door collisions
+                for (let door of this.doors) {
+                    if (door.locked && this.checkCollision(entity, door)) {
+                        if (entity.x < door.x) {
+                            entity.x = door.x - entity.w;
+                        } else {
+                            entity.x = door.x + door.w;
+                        }
+                        entity.vx = 0;
+                    }
+                }
+            }
+            
+            checkCollision(a, b) {
+                return a.x < b.x + b.w &&
+                       a.x + a.w > b.x &&
+                       a.y < b.y + b.h &&
+                       a.y + a.h > b.y;
+            }
+            
+            render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw platforms
+                ctx.fillStyle = '#2d4059';
+                for (let platform of this.platforms) {
+                    ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
+                    ctx.strokeStyle = '#1a2332';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(platform.x, platform.y, platform.w, platform.h);
+                }
+                
+                // Draw switches
+                for (let sw of this.switches) {
+                    ctx.fillStyle = sw.active ? '#00ff88' : '#ff4444';
+                    ctx.fillRect(sw.x, sw.y + 30, sw.w, sw.h);
+                }
+                
+                // Draw doors
+                for (let door of this.doors) {
+                    if (door.locked) {
+                        ctx.fillStyle = '#8b4513';
+                        ctx.fillRect(door.x, door.y, door.w, door.h);
+                        
+                        // Draw lock
+                        ctx.fillStyle = '#ffd700';
+                        ctx.beginPath();
+                        ctx.arc(door.x + door.w/2, door.y + door.h/2, 8, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                
+                // Draw boxes
+                ctx.fillStyle = '#8b6f47';
+                for (let box of this.boxes) {
+                    ctx.fillRect(box.x, box.y, box.w, box.h);
+                    ctx.strokeStyle = '#5d4a2f';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(box.x, box.y, box.w, box.h);
+                    
+                    // Draw box pattern
+                    ctx.strokeStyle = '#5d4a2f';
+                    ctx.beginPath();
+                    ctx.moveTo(box.x, box.y);
+                    ctx.lineTo(box.x + box.w, box.y + box.h);
+                    ctx.moveTo(box.x + box.w, box.y);
+                    ctx.lineTo(box.x, box.y + box.h);
+                    ctx.stroke();
+                }
+                
+                // Draw keys
+                ctx.fillStyle = '#ffd700';
+                for (let key of this.keys) {
+                    ctx.beginPath();
+                    ctx.arc(key.x + key.w/2, key.y + key.h/2, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(key.x + 10, key.y + 5, 8, 10);
+                }
+                
+                // Draw goal
+                if (this.goal) {
+                    const gradient = ctx.createRadialGradient(
+                        this.goal.x + this.goal.w/2, 
+                        this.goal.y + this.goal.h/2, 
+                        0,
+                        this.goal.x + this.goal.w/2, 
+                        this.goal.y + this.goal.h/2, 
+                        this.goal.w/2
+                    );
+                    gradient.addColorStop(0, '#00ff88');
+                    gradient.addColorStop(1, '#00aa55');
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(this.goal.x, this.goal.y, this.goal.w, this.goal.h);
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🏁', this.goal.x + this.goal.w/2, this.goal.y + this.goal.h/2 + 7);
+                }
+                
+                // Draw player
+                ctx.fillStyle = '#4a90e2';
+                ctx.fillRect(this.player.x, this.player.y, this.player.w, this.player.h);
+                
+                // Draw player face
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(this.player.x + 8, this.player.y + 8, 5, 5);
+                ctx.fillRect(this.player.x + 17, this.player.y + 8, 5, 5);
+                ctx.fillRect(this.player.x + 10, this.player.y + 20, 10, 3);
+                
+                // Draw key indicator
+                if (this.hasKey) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('🔑', 10, 30);
+                }
+            }
+            
+            gameLoop() {
+                this.update();
+                this.render();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+            
+            resetLevel() {
+                this.loadLevel(this.currentLevel);
+            }
+            
+            nextLevel() {
+                this.currentLevel++;
+                if (this.currentLevel >= this.levels.length) {
+                    this.showMessage("🎉 Congratulations! You completed all levels! 🎉", 3000);
+                    this.currentLevel = 0;
+                }
+                this.loadLevel(this.currentLevel);
+                this.showMessage(`Level ${this.currentLevel + 1}: ${this.levels[this.currentLevel].name}`, 2000);
+            }
+            
+            showMessage(text, duration) {
+                const msg = document.getElementById('message');
+                msg.textContent = text;
+                msg.style.display = 'block';
+                setTimeout(() => {
+                    msg.style.display = 'none';
+                }, duration);
+            }
+        }
+        
+        const game = new Game();
+    </script>
+</body>
+</html>
